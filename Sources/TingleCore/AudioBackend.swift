@@ -155,6 +155,7 @@ public final class AudioBackend: TingBackend {
 
         engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
             guard let self, let channel = buffer.floatChannelData?[0] else { return }
+            LevelMeter.shared.ingest(buffer)
             self.bufferConsumer?(buffer)
             let samples = Array(UnsafeBufferPointer(start: channel, count: Int(buffer.frameLength)))
             self.detectionQueue.async {

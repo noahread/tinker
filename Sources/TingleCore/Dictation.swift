@@ -653,8 +653,7 @@ final class DictationSession {
         // (configured UID or the top line-in candidate — never the
         // default/built-in mic). It stays warm 60s between sessions so
         // consecutive squeezes have no spin-up dead zone.
-        let resolvedUID = deviceUID
-            ?? InputDeviceSelector.candidates(from: AudioDeviceCatalog.systemInputDevices()).first?.uid
+        let resolvedUID = deviceUID ?? InputDeviceSelector.resolvedCaptureUID()
         guard let resolvedUID else { throw DictationError.noInputDevice }
         guard WarmCapture.shared.attach(uid: resolvedUID, consumer: { [weak self] buffer in
             self?.feed(buffer)
@@ -795,6 +794,35 @@ public final class WarmCapture {
         dispatchPrecondition(condition: .notOnQueue(.main))
         #endif
         return AudioEngineOps.queue.sync {
+            guard ensureEngine(uid: resolvedUID) else { return false }
+            lock.lock(); consumer = newConsumer; lock.unlock()
+            return true
+        }
+    }
+
+    /// Keep the engine running (for the level meter) without touching the
+    /// consumer: an external-app route in serial mode has no engine at all
+    /// otherwise. Pairs with releaseMetering(). Non-main thread.
+    public func holdForMetering(uid resolvedUID: String) -> Bool {
+        #if DEBUG
+        dispatchPrecondition(condition: .notOnQueue(.main))
+        #endif
+        return AudioEngineOps.queue.sync { ensureEngine(uid: resolvedUID) }
+    }
+
+    /// Schedule the idle teardown unless dictation still consumes.
+    public func releaseMetering() {
+        AudioEngineOps.queue.async { [self] in
+            lock.lock(); let busy = consumer != nil; lock.unlock()
+            guard !busy else { return }
+            scheduleIdleTeardown()
+        }
+    }
+
+    /// AudioEngineOps.queue only. Starts (or reuses) the engine pinned to
+    /// the device; the consumer is left untouched.
+    private func ensureEngine(uid resolvedUID: String) -> Bool {
+        do {
             idleTeardown?.cancel()
             idleTeardown = nil
 
@@ -803,10 +831,7 @@ public final class WarmCapture {
                 // wedged warm engine gets rebuilt instead of hanging us.
                 var running = false
                 let responsive = AudioEngineOps.bounded(timeout: 0.5) { running = engine.isRunning }
-                if responsive, running {
-                    lock.lock(); consumer = newConsumer; lock.unlock()
-                    return true
-                }
+                if responsive, running { return true }
             }
             stopEngine()
 
@@ -816,6 +841,7 @@ public final class WarmCapture {
             guard tapFormat.sampleRate > 0 else { return false }
             newEngine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: tapFormat) { [weak self] buffer, _ in
                 guard let self else { return }
+                LevelMeter.shared.ingest(buffer)
                 self.lock.lock()
                 let sink = self.consumer
                 self.lock.unlock()
@@ -828,7 +854,6 @@ public final class WarmCapture {
                 log.error("warm capture engine failed to start: \(String(describing: error))")
                 return false
             }
-            lock.lock(); consumer = newConsumer; lock.unlock()
             engine = newEngine
             uid = resolvedUID
             configChangeObserver = NotificationCenter.default.addObserver(
@@ -857,12 +882,15 @@ public final class WarmCapture {
     /// session follows, then tears down (clears the mic-in-use indicator).
     public func detach() {
         lock.lock(); consumer = nil; lock.unlock()
-        AudioEngineOps.queue.async { [self] in
-            idleTeardown?.cancel()
-            let work = DispatchWorkItem { [weak self] in self?.stopEngine() }
-            idleTeardown = work
-            AudioEngineOps.queue.asyncAfter(deadline: .now() + 60, execute: work)
-        }
+        AudioEngineOps.queue.async { [self] in scheduleIdleTeardown() }
+    }
+
+    /// AudioEngineOps.queue only.
+    private func scheduleIdleTeardown() {
+        idleTeardown?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.stopEngine() }
+        idleTeardown = work
+        AudioEngineOps.queue.asyncAfter(deadline: .now() + 60, execute: work)
     }
 
     /// AudioEngineOps.queue only. Bounded: a wedged engine (device slept or

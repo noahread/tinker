@@ -17,6 +17,13 @@ struct AudioInputDevice: Equatable {
 /// never the built-in mic, and never CoreAudio synthetics like
 /// "CADefaultDeviceAggregate" or app-virtual devices (Teams/Zoom).
 enum InputDeviceSelector {
+    /// The device dictation and the level meter capture from in serial
+    /// mode: the pinned input, else the top line-in candidate (never the
+    /// default/built-in mic).
+    static func resolvedCaptureUID() -> String? {
+        PinnedInput.uid ?? candidates(from: AudioDeviceCatalog.systemInputDevices()).first?.uid
+    }
+
     /// Case-insensitive name fragments that mark a preferred device, in
     /// priority tiers. "Line in" outranks brand matches: multi-jack capture
     /// boxes (e.g. the Cubilux HLMS-C4) expose BOTH a "MIC IN" and a

@@ -74,6 +74,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItemController: StatusItemController!
     private let userInputMonitor = UserInputMonitor()
     private var permissions: PermissionsMonitor!
+    /// tinker: the route the current squeeze drives (see RouteResolver).
+    private var routeSession = RouteSession()
+    private let inputSwitcher = DefaultInputSwitcher()
 
     private let log = Logger(subsystem: Log.subsystem, category: "app")
 
@@ -97,6 +100,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         permissions = PermissionsMonitor()
         statusItemController = StatusItemController(
             configStore: configStore, coordinator: coordinator, permissions: permissions)
+        statusItemController.onSimulatedEvent = { [weak self] event in self?.handle(event: event) }
         userInputMonitor.onUserInput = { [weak self] in
             self?.dictation.contentMoved()
         }
@@ -178,13 +182,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if decision.stopDictation { dictation.stopDictation() }
             if let held = decision.setHeld { statusItemController.setTriggerHeld(held) }
 
-            // Only a genuine transition fires the mapped action / starts a
-            // session (dedup: don't double-fire on a repeated edge).
-            guard decision.fireMappedAction else { return }
-            if decision.startDictationOnPress, configStore.config.action(for: event) == .dictate {
-                dictation.startDictation()
+            if !down {
+                // Close whatever route the squeeze opened — gated by the
+                // session, not by fireMappedAction, so a desynced release
+                // still sends the closing toggle exactly once.
+                closeRoute()
                 return
             }
+
+            // Only a genuine press opens a route (dedup: a repeated edge
+            // must never re-open a toggle).
+            guard decision.fireMappedAction else { return }
+            openRoute()
+            return
         }
 
         guard let action = configStore.config.action(for: event) else {
@@ -218,9 +228,99 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         actionRunner.run(action)
     }
 
+    // MARK: - Routing (tinker)
+
+    private func runningBundleIDs() -> Set<String> {
+        Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
+    }
+
+    /// Squeeze: pick the route for the frontmost app and fire its down action.
+    private func openRoute() {
+        let frontmost = NSWorkspace.shared.frontmostApplication
+        let route = RouteResolver.resolve(
+            frontmost: frontmost?.bundleIdentifier, frontmostName: frontmost?.localizedName,
+            running: runningBundleIDs(), config: configStore.config)
+        guard let down = routeSession.press(route) else {
+            log.warning("route already active; ignoring duplicate press")
+            return
+        }
+        log.info("route: \(route.name, privacy: .public) (\(String(describing: route.kind), privacy: .public)) → \(route.summary, privacy: .public)")
+        statusItemController.setActiveRoute(route)
+        LevelMeter.shared.arm()
+
+        if route.usesBuiltinDictation {
+            dictation.startDictation()
+            return
+        }
+
+        guard actionRunner.ensureAccessibility() else {
+            statusItemController.setDictationStatus("⚠️ Accessibility needed — open the tinker menu")
+            return
+        }
+        // External app: no engine runs in serial mode, so hold one for the
+        // meter (never on main — WarmCapture syncs onto the engine queue).
+        if coordinator.runningAudioBackend == nil, let uid = InputDeviceSelector.resolvedCaptureUID() {
+            DispatchQueue.global(qos: .userInitiated).async {
+                _ = WarmCapture.shared.holdForMetering(uid: uid)
+            }
+        }
+        let fire = { [self] in
+            switch down {
+            case .keystroke, .keyHold: dictation.contentMoved()
+            default: break
+            }
+            actionRunner.run(down)
+        }
+        if configStore.config.routing.switchDefaultInput, let uid = InputDeviceSelector.resolvedCaptureUID() {
+            inputSwitcher.engage(uid: uid)
+            // Give CoreAudio a beat to publish the new default before the
+            // app opens its recorder.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: fire)
+        } else {
+            fire()
+        }
+    }
+
+    /// Release: fire the remembered route's up action (once) and tidy up.
+    private func closeRoute() {
+        let route = routeSession.active
+        let up = routeSession.release(running: runningBundleIDs())
+        statusItemController.setActiveRoute(nil)
+        // Built-in dictation owns its status line ("Inserted N words");
+        // only clear the accessibility warning an external route may have set.
+        if route?.usesBuiltinDictation != true { statusItemController.setDictationStatus(nil) }
+        LevelMeter.shared.disarm()
+        WarmCapture.shared.releaseMetering()
+        inputSwitcher.restore()
+        guard let route else { return }
+        guard let up else {
+            if route.up != nil {
+                log.info("route \(route.name, privacy: .public): app gone; skipping up action")
+            }
+            return
+        }
+        let fire = { [self] in
+            if case .keystroke = up { dictation.contentMoved() }
+            actionRunner.run(up)
+        }
+        // A toggle must close in the app it opened in: if focus moved
+        // mid-hold, bring that app back first.
+        if route.kind == .app, let id = route.bundleId,
+           NSWorkspace.shared.frontmostApplication?.bundleIdentifier != id,
+           let app = NSRunningApplication.runningApplications(withBundleIdentifier: id).first {
+            log.info("route \(route.name, privacy: .public): re-activating before closing toggle")
+            app.activate()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: fire)
+        } else {
+            fire()
+        }
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
-        // Never leave a keyHold key stuck down when quitting.
+        // Never leave a keyHold key stuck down or the input device switched
+        // when quitting.
         actionRunner?.releaseHeldKeys()
+        inputSwitcher.restore()
         coordinator?.stop()
     }
 }

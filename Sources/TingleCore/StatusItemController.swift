@@ -16,6 +16,13 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let statusItem: NSStatusItem
     private let statusLineItem = NSMenuItem(title: BackendState.idle.menuDescription, action: nil, keyEquivalent: "")
     private let batteryItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    // tinker routing readout: what a squeeze would do right now.
+    private let frontmostRouteItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private let fallbackRouteItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private let lastRouteItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    /// Injects a synthetic ting event (menu "Simulate squeeze") so routing
+    /// can be exercised with no ting attached.
+    var onSimulatedEvent: ((TingEvent) -> Void)?
     private let micPermissionItem = NSMenuItem(
         title: "⚠️ Grant microphone access…",
         action: #selector(fixMicrophonePermission),
@@ -73,6 +80,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         updatePermissionItems()
         rebuildInputDeviceSubmenu()
         updateLaunchAtLoginState()
+        refreshRouteItems()
     }
 
     // MARK: - Menu construction
@@ -88,6 +96,17 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         batteryItem.isEnabled = false
         batteryItem.isHidden = true
         menu.addItem(batteryItem)
+
+        menu.addItem(.separator())
+        for item in [frontmostRouteItem, fallbackRouteItem, lastRouteItem] {
+            item.isEnabled = false
+            menu.addItem(item)
+        }
+        lastRouteItem.isHidden = true
+        let simulateItem = NSMenuItem(title: "Simulate squeeze (2 s)", action: #selector(simulateSqueeze), keyEquivalent: "")
+        simulateItem.target = self
+        menu.addItem(simulateItem)
+        menu.addItem(.separator())
 
         // Permission problems (hidden while everything is granted).
         micPermissionItem.target = self
@@ -195,6 +214,80 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         refreshIcon()
     }
 
+    // MARK: - Routing readout (tinker)
+
+    /// The route the current squeeze is driving; nil between squeezes.
+    private var activeRoute: Route?
+    private var waveformTimer: Timer?
+    private var lastRoute: (route: Route, at: Date)?
+
+    /// Called on squeeze (route) and release (nil). While a route is active
+    /// the status item shows the live waveform plus "→ App".
+    func setActiveRoute(_ route: Route?) {
+        activeRoute = route
+        waveformTimer?.invalidate()
+        waveformTimer = nil
+        if let route {
+            lastRoute = (route, Date())
+            let title = NSAttributedString(
+                string: " → \(route.name)",
+                attributes: [.font: NSFont.menuBarFont(ofSize: 0), .foregroundColor: NSColor.labelColor])
+            statusItem.button?.attributedTitle = title
+            statusItem.button?.imagePosition = .imageLeading
+            if configStore.config.routing.showWaveform {
+                let timer = Timer(timeInterval: 1.0 / 15.0, repeats: true) { [weak self] _ in
+                    self?.refreshIcon()
+                }
+                timer.tolerance = 0.01
+                RunLoop.main.add(timer, forMode: .common)
+                waveformTimer = timer
+            }
+        } else {
+            statusItem.button?.attributedTitle = NSAttributedString(string: "")
+            statusItem.button?.imagePosition = .imageOnly
+        }
+        refreshIcon()
+    }
+
+    /// The menu closes before this runs, so the previously frontmost app
+    /// is back in front: the squeeze routes exactly as a real one would.
+    @objc private func simulateSqueeze() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            self?.onSimulatedEvent?(.triggerDown)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                self?.onSimulatedEvent?(.triggerUp)
+            }
+        }
+    }
+
+    private func refreshRouteItems() {
+        let frontmost = NSWorkspace.shared.frontmostApplication
+        let running = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
+        let config = configStore.config
+        let route = RouteResolver.resolve(
+            frontmost: frontmost?.bundleIdentifier, frontmostName: frontmost?.localizedName,
+            running: running, config: config)
+        let appName = frontmost?.localizedName ?? "(no app)"
+        frontmostRouteItem.title = "Squeeze in \(appName): \(RouteResolver.describe(route))"
+        let fallback = RouteResolver.fallback(running: running, config: config)
+        if route.kind == .app {
+            fallbackRouteItem.title = "Elsewhere: \(RouteResolver.describe(fallback))"
+        } else if fallback.kind == .fallback {
+            fallbackRouteItem.title = "Fallback: \(fallback.name) is running"
+        } else {
+            let names = config.fallback.compactMap(\.name)
+            fallbackRouteItem.title = names.isEmpty
+                ? "Fallback: built-in dictation"
+                : "Fallback: \(names.joined(separator: ", ")) not running → built-in dictation"
+        }
+        if let last = lastRoute {
+            let ago = Int(Date().timeIntervalSince(last.at))
+            let when = ago < 60 ? "\(ago)s ago" : ago < 3600 ? "\(ago / 60)m ago" : "\(ago / 3600)h ago"
+            lastRouteItem.title = "Last squeeze: \(RouteResolver.describe(last.route)), \(when)"
+            lastRouteItem.isHidden = false
+        }
+    }
+
     func setTriggerHeld(_ held: Bool) {
         triggerHeld = held
         refreshIcon()
@@ -256,6 +349,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             case .idle, .noInputDevice:
                 dot = .none
             }
+        }
+        if dictating, activeRoute != nil, configStore.config.routing.showWaveform {
+            statusItem.button?.image = MenuBarIcon.waveform(
+                levels: LevelMeter.shared.snapshot(), dot: dot, needsAttention: attention)
+            return
         }
         statusItem.button?.image = MenuBarIcon.image(
             dictating: dictating, dot: dot, needsAttention: attention)
