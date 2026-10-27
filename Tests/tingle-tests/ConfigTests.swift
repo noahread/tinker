@@ -2,6 +2,43 @@ import Foundation
 import TingleCore
 
 func runConfigTests() {
+    do { // tinker routing tables ship in the defaults and layer per app
+        let config = try! TingConfig.parse(toml: ConfigStore.defaultTOML)
+        expect(config.routing.enabled, "routing: enabled by default")
+        expect(!config.routing.switchDefaultInput, "routing: input switch off by default")
+        expect(config.routing.showWaveform, "routing: waveform on by default")
+        expectEqual(config.apps.count, 2, "routing: two app profiles shipped")
+        expectEqual(config.apps["com.anthropic.claudefordesktop"]?.dictation,
+                    DictationShortcut(mode: .toggle, key: "d", modifiers: ["cmd"]), "routing: claude profile")
+        expectEqual(config.apps["com.openai.codex"]?.dictation,
+                    DictationShortcut(mode: .hold, key: "f18"), "routing: codex hold profile")
+        expectEqual(config.fallback.map { $0.name ?? "" }, ["MacWhisper", "Handy"], "routing: fallback order")
+        expect(config.fallback.allSatisfy { $0.requireRunning }, "routing: fallbacks require running")
+
+        let overlay = try! TingConfig.parse(defaults: ConfigStore.defaultTOML, user: """
+        [apps."com.apple.Safari"]
+        name = "Safari"
+        dictation = { mode = "toggle", key = "f17" }
+        """)
+        expectEqual(overlay.apps.count, 3, "routing: user app table merges per app")
+        expect(overlay.apps["com.anthropic.claudefordesktop"] != nil, "routing: defaults survive app overlay")
+
+        let replaced = try! TingConfig.parse(defaults: ConfigStore.defaultTOML, user: """
+        [[fallback]]
+        name = "Only"
+        bundleId = "x.y"
+        dictation = { mode = "hold", key = "f13" }
+        """)
+        expectEqual(replaced.fallback.count, 1, "routing: user fallback list replaces wholesale")
+
+        let disabled = try! TingConfig.parse(defaults: ConfigStore.defaultTOML, user: "[routing]\nenabled = false\n")
+        expect(!disabled.routing.enabled, "routing: can be disabled")
+
+        expect((try? TingConfig.parse(toml: """
+        [apps."a.b"]
+        dictation = { mode = "bogus", key = "d" }
+        """)) == nil, "routing: unknown dictation mode is a parse error")
+    }
     do { // the shipped literate default template must parse to the defaults
         let config = try! TingConfig.parse(toml: ConfigStore.defaultTOML)
         expectEqual(config.toneFrequencies, [17500, 18000, 18500, 19000], "config: default frequencies")

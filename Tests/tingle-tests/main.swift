@@ -170,6 +170,8 @@ if CommandLine.arguments.count >= 3, CommandLine.arguments[1] == "--dump-flash-b
 runConfigTests()
 runTriggerReconcilerTests()
 runTriggerRoutingTests()
+runKeyCodesTests()
+runRouteResolverTests()
 runBatteryEstimateTests()
 runReplacementTests()
 runWhiteFallbackTests()

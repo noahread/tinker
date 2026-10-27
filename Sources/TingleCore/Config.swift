@@ -124,6 +124,98 @@ public struct RewriteConfig: Decodable, Equatable {
     }
 }
 
+/// How an app's own dictation is driven from the handle. `toggle` presses
+/// the chord on squeeze and again on release (Claude ⌘D, MacWhisper in
+/// toggle mode); `hold` holds the chord down for the whole squeeze
+/// (push-to-talk hotkeys: Codex "press to dictate", MacWhisper/Handy in
+/// hold mode).
+public struct DictationShortcut: Decodable, Equatable {
+    public enum Mode: String, Decodable { case toggle, hold }
+    public var mode: Mode
+    public var key: String
+    public var modifiers: [String]
+
+    public init(mode: Mode, key: String, modifiers: [String] = []) {
+        self.mode = mode
+        self.key = key
+        self.modifiers = modifiers
+    }
+
+    private enum CodingKeys: String, CodingKey { case mode, key, modifiers }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        mode = try c.decode(Mode.self, forKey: .mode)
+        key = try c.decode(String.self, forKey: .key)
+        modifiers = try c.decodeIfPresent([String].self, forKey: .modifiers) ?? []
+    }
+
+    /// "⌘D (toggle)", "F18 (hold)".
+    public var summary: String {
+        "\(KeyCodes.symbol(key: key, modifiers: modifiers)) (\(mode.rawValue))"
+    }
+}
+
+/// One routing target: an app with its own dictation (`[apps."<bundle id>"]`)
+/// or a fallback transcription app (`[[fallback]]`). Either describe the
+/// shortcut with `dictation` or give explicit `triggerDown`/`triggerUp`
+/// actions (explicit keys win over the derived ones).
+public struct AppProfile: Decodable, Equatable {
+    public var name: String?
+    public var bundleId: String?
+    /// Fallback entries only: skip this entry unless the app is running.
+    public var requireRunning: Bool
+    public var dictation: DictationShortcut?
+    public var triggerDown: TingAction?
+    public var triggerUp: TingAction?
+
+    public init(name: String? = nil, bundleId: String? = nil, requireRunning: Bool = true,
+                dictation: DictationShortcut? = nil,
+                triggerDown: TingAction? = nil, triggerUp: TingAction? = nil) {
+        self.name = name
+        self.bundleId = bundleId
+        self.requireRunning = requireRunning
+        self.dictation = dictation
+        self.triggerDown = triggerDown
+        self.triggerUp = triggerUp
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case name, bundleId, requireRunning, dictation, triggerDown, triggerUp
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decodeIfPresent(String.self, forKey: .name)
+        bundleId = try c.decodeIfPresent(String.self, forKey: .bundleId)
+        requireRunning = try c.decodeIfPresent(Bool.self, forKey: .requireRunning) ?? true
+        dictation = try c.decodeIfPresent(DictationShortcut.self, forKey: .dictation)
+        triggerDown = try c.decodeIfPresent(TingAction.self, forKey: .triggerDown)
+        triggerUp = try c.decodeIfPresent(TingAction.self, forKey: .triggerUp)
+    }
+}
+
+/// `[routing]`: the per-app routing switchboard. All inert when `enabled`
+/// is false (upstream tingle behaviour: `[mappings]` only).
+public struct RoutingConfig: Decodable, Equatable {
+    public var enabled = true
+    /// Make the ting's capture device the system default input while the
+    /// handle is held, so the external app records the ting's mic.
+    public var switchDefaultInput = false
+    public var showWaveform = true
+
+    public init() {}
+
+    private enum CodingKeys: String, CodingKey { case enabled, switchDefaultInput, showWaveform }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+        switchDefaultInput = try c.decodeIfPresent(Bool.self, forKey: .switchDefaultInput) ?? false
+        showWaveform = try c.decodeIfPresent(Bool.self, forKey: .showWaveform) ?? true
+    }
+}
+
 public struct TingConfig: Decodable {
     /// The four mode tone frequencies (Hz), in mode order 1–4.
     public var toneFrequencies: [Double]
@@ -149,6 +241,11 @@ public struct TingConfig: Decodable {
     public var replacements: [String: String]
     /// Post-dictation LLM rewrite pass.
     public var rewrite: RewriteConfig
+    /// Per-app dictation profiles keyed by bundle id (`[apps."…"]`).
+    public var apps: [String: AppProfile]
+    /// Ordered fallback transcription apps (`[[fallback]]`).
+    public var fallback: [AppProfile]
+    public var routing: RoutingConfig
 
     /// The defaults document is the single source of truth: `default` is
     /// its parse (the bare-struct fallback below can only be reached if
@@ -159,17 +256,23 @@ public struct TingConfig: Decodable {
 
     init(toneFrequencies: [Double], vocabulary: [String],
          mappings: [String: TingAction], replacements: [String: String] = [:],
-         rewrite: RewriteConfig = RewriteConfig()) {
+         rewrite: RewriteConfig = RewriteConfig(),
+         apps: [String: AppProfile] = [:], fallback: [AppProfile] = [],
+         routing: RoutingConfig = RoutingConfig()) {
         self.toneFrequencies = toneFrequencies
         self.vocabulary = vocabulary
         self.extraVocabulary = []
         self.mappings = mappings
         self.replacements = replacements
         self.rewrite = rewrite
+        self.apps = apps
+        self.fallback = fallback
+        self.routing = routing
     }
 
     private enum CodingKeys: String, CodingKey {
-        case toneFrequencies, vocabulary, extraVocabulary, mappings, replacements, rewrite
+        case toneFrequencies, vocabulary, extraVocabulary, mappings, replacements, rewrite,
+             apps, fallback, routing
     }
 
     public init(from decoder: Decoder) throws {
@@ -181,6 +284,9 @@ public struct TingConfig: Decodable {
         mappings = try container.decodeIfPresent([String: TingAction].self, forKey: .mappings) ?? [:]
         replacements = try container.decodeIfPresent([String: String].self, forKey: .replacements) ?? [:]
         rewrite = try container.decodeIfPresent(RewriteConfig.self, forKey: .rewrite) ?? RewriteConfig()
+        apps = try container.decodeIfPresent([String: AppProfile].self, forKey: .apps) ?? [:]
+        fallback = try container.decodeIfPresent([AppProfile].self, forKey: .fallback) ?? []
+        routing = try container.decodeIfPresent(RoutingConfig.self, forKey: .routing) ?? RoutingConfig()
     }
 
     /// Word-boundary, case-sensitive corrections for finalized transcript
@@ -271,7 +377,7 @@ public final class ConfigStore {
     /// mirrored to default-config.toml on every launch so it is always
     /// current, browsable, and copy-from-able. Humans edit config.toml.
     public static let defaultTOML = """
-    # tingle defaults - REWRITTEN BY TINGLE ON EVERY LAUNCH; edits here are
+    # tinker defaults - REWRITTEN BY TINKER ON EVERY LAUNCH; edits here are
     # lost. This file is the documentation: browse it, then copy any key
     # into config.toml (same folder) and change it there. Keys in
     # config.toml win; sections like [mappings] merge per key.
@@ -294,7 +400,10 @@ public final class ConfigStore {
     #   { type = "keyHold",   key = "f5" }       held until handle release
     #   { type = "shell",     command = "..." }  run with /bin/zsh -lc
     #
-    # Keys: a-z, 0-9, f1-f12, return, escape, space, tab, delete, arrows.
+    # Keys: a-z, 0-9, f1-f20, return, escape, space, tab, delete,
+    # forwarddelete, home, end, pageup, pagedown, arrows, and punctuation
+    # by name (minus, equal, leftbracket, rightbracket, backslash,
+    # semicolon, quote, comma, period, slash, grave).
     # Modifiers: "cmd", "shift", "opt", "ctrl".
 
     # Words and phrases that bias dictation recognition - names, jargon,
@@ -432,13 +541,51 @@ public final class ConfigStore {
       fi
     done
     ''' }
+
+    # -- Per-app voice routing (tinker) ----------------------------------------
+    # On squeeze, tinker looks at the frontmost app:
+    #   1. [apps."<bundle id>"]  -> drive THAT app's own dictation shortcut
+    #   2. [[fallback]]          -> first entry whose app is running
+    #   3. builtin               -> [mappings] triggerDown / triggerUp above
+    # `dictation` describes the app's shortcut: mode "toggle" presses it on
+    # squeeze and again on release; mode "hold" holds it for the whole
+    # squeeze. Explicit triggerDown/triggerUp actions override the derived
+    # ones. Dotted bundle ids must be quoted. [apps] tables merge per app
+    # with these defaults; a [[fallback]] list in config.toml REPLACES this
+    # whole list. Find a bundle id with:  osascript -e 'id of app "Codex"'
+    [routing]
+    enabled = true
+    switchDefaultInput = false   # make the ting's adapter the system input while held
+    showWaveform = true
+
+    [apps."com.anthropic.claudefordesktop"]
+    name = "Claude"
+    dictation = { mode = "toggle", key = "d", modifiers = ["cmd"] }
+
+    [apps."com.openai.codex"]
+    name = "Codex"
+    # Codex's dictation key is set in Codex settings; bind its "press to
+    # dictate" key to F18 there and keep this in sync.
+    dictation = { mode = "hold", key = "f18" }
+
+    [[fallback]]
+    name = "MacWhisper"
+    bundleId = "com.goodsnooze.MacWhisper"
+    # MacWhisper > Settings > Dictation: toggle mode, shortcut Control-Z.
+    dictation = { mode = "toggle", key = "z", modifiers = ["ctrl"] }
+
+    [[fallback]]
+    name = "Handy"
+    bundleId = "com.pais.handy"
+    triggerDown = { type = "shell", command = "handy --toggle-transcription" }
+    triggerUp   = { type = "shell", command = "handy --toggle-transcription" }
     """
 
     /// The starter user config: near-empty on purpose. The defaults doc
     /// carries the documentation; this file carries only what the user
     /// changes.
     public static let userTemplateTOML = """
-    # tingle configuration - edit and save: tingle reloads it live.
+    # tinker configuration - edit and save: tinker reloads it live.
     #
     # Every available key, documented, lives in default-config.toml next
     # to this file (rewritten by the app on every launch, so it is always
@@ -449,6 +596,10 @@ public final class ConfigStore {
     # Words the recognizer keeps mangling, added on top of the built-in
     # vocabulary list (see default-config.toml).
     extraVocabulary = []
+
+    # Per-app routing lives in [apps."<bundle id>"] and [[fallback]]
+    # tables - see default-config.toml for the shipped Claude, Codex,
+    # MacWhisper and Handy entries and copy the ones you change here.
     """
 
     private(set) var config: TingConfig = .default
