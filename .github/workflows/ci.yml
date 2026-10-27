@@ -1,9 +1,8 @@
 name: CI
-# PRs only: main is squash-merge-only, so a push to main is always a tree
-# that just passed this exact suite — re-running it burned a macOS runner
-# per merge for nothing (auto-release does its own version self-test).
 on:
   pull_request:
+  push:
+    branches: [main]
 
 jobs:
   test:
@@ -16,8 +15,6 @@ jobs:
         run: swift run tingle-tests
       - name: Device payload tests
         run: python3 tools/test_payload.py
-      - name: Version-bump logic tests
-        run: cd tools && python3 test_next_version.py
       - name: Payload copies in sync
         run: cmp device/tingle_main.py Sources/TingleCore/Resources/tingle_main.py
       - name: Bundle assembles
@@ -28,5 +25,5 @@ jobs:
         # the build machine). Move the .app away from the checkout so no
         # local .build fallback can mask a broken layout.
         run: |
-          cp -R dist/tingle.app /tmp/tingle-check.app
-          TINGLE_PAYLOAD_CHECK=1 /tmp/tingle-check.app/Contents/MacOS/tingle
+          cp -R dist/tinker.app /tmp/tinker-check.app
+          TINGLE_PAYLOAD_CHECK=1 /tmp/tinker-check.app/Contents/MacOS/tingle

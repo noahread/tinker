@@ -1,6 +1,14 @@
-# tingle
+# tinker
 
-**Voice-first agentic coding with a [Teenage Engineering EP-2350 "ting"](https://teenage.engineering/store/ep-2350).**
+**Smart push-to-talk for the [Teenage Engineering EP-2350 "ting"](https://teenage.engineering/store/ep-2350): squeeze the handle and talk to whatever app is in front, using that app's own dictation.**
+
+> tinker is a fork of [tutorintelligence/tingle](https://github.com/tutorintelligence/tingle)
+> (MIT, © Tutor Intelligence). tingle does all the hardware work — the
+> on-device event engine, the ultrasonic chirp protocol, USB serial, firmware
+> flashing, built-in dictation. tinker adds per-app routing (Claude ⌘D,
+> Codex, MacWhisper, Handy, then built-in) and a live menu bar waveform
+> that shows where your speech is going. Everything below that mentions
+> "tingle" behaviour still applies.
 
 <p align="center"><img src="docs/images/hero.svg" alt="Squeeze the ting and talk; your words land in your agent, no keyboard" width="760"></p>
 

@@ -114,7 +114,7 @@ final class PermissionsMonitor {
             let d = Prefs.suite
             let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
             NSApp.activate(ignoringOtherApps: true)
-            if Bundle.main.bundleIdentifier == "com.tutorintelligence.tingle",
+            if Bundle.main.bundleIdentifier == AppIdentity.bundleID,
                d.bool(forKey: "axEverGranted"),
                d.string(forKey: "axAutoRepairVersion") != version {
                 d.set(version, forKey: "axAutoRepairVersion")

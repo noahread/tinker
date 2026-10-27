@@ -6,7 +6,7 @@ import Foundation
 /// only the dev build, and the dev build re-offering a firmware upgrade
 /// the installed app had already done. One domain, one truth.
 public enum Prefs {
-    public static let suite = UserDefaults(suiteName: "com.tutorintelligence.tingle") ?? .standard
+    public static let suite = UserDefaults(suiteName: AppIdentity.bundleID) ?? .standard
 
     /// Firmware bookkeeping is PER DEVICE: the flag records what tingle
     /// last flashed onto a specific ting (identified by its USB serial

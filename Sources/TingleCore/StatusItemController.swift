@@ -36,7 +36,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let restoreItem = NSMenuItem(title: "Restore stock", action: #selector(restoreStock), keyEquivalent: "")
     private let firmwareItem = NSMenuItem(title: "Upgrade ting firmware…", action: #selector(upgradeFirmware), keyEquivalent: "")
     private let launchAtLoginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
-    private let updater = Updater()
 
     private let log = Logger(subsystem: Log.subsystem, category: "menu")
 
@@ -54,7 +53,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
         if let button = statusItem.button {
             button.image = MenuBarIcon.image(dictating: false, dot: .none)
-            button.toolTip = "tingle"
+            button.toolTip = "tinker"
         }
 
         statusItem.menu = buildMenu()
@@ -130,9 +129,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         diagnosticsItem.target = self
         menu.addItem(diagnosticsItem)
 
-        // Version + updates are always visible (discoverability); the
-        // check is only actionable in the installed .app — Sparkle cannot
-        // update a bare dev binary.
         // Identity line: release builds show the version; dev binaries
         // show branch @ sha (git, resolved from the executable's repo) so
         // it's always obvious WHICH tingle is running (multiple sessions
@@ -140,7 +136,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
         let identity: String
         if let version {
-            identity = "tingle \(version)"
+            identity = "tinker \(version)"
         } else {
             let repo = URL(fileURLWithPath: CommandLine.arguments[0])
                 .resolvingSymlinksInPath()
@@ -162,20 +158,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             }
             let branch = git(["branch", "--show-current"]) ?? "?"
             let sha = git(["rev-parse", "--short", "HEAD"]) ?? "?"
-            identity = "tingle dev — \(branch) @ \(sha)"
+            identity = "tinker dev — \(branch) @ \(sha)"
         }
         let versionItem = NSMenuItem(title: identity, action: nil, keyEquivalent: "")
         versionItem.isEnabled = false
         menu.addItem(versionItem)
-
-        let updateItem = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
-        if updater.isActive {
-            updateItem.target = self
-        } else {
-            updateItem.isEnabled = false
-            updateItem.title = "Check for Updates… (installed app only)"
-        }
-        menu.addItem(updateItem)
 
         launchAtLoginItem.target = self
         menu.addItem(launchAtLoginItem)
@@ -373,7 +360,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         // The repair path (tccutil reset) only makes sense for the bundled
         // app: the dev binary's accessibility grant belongs to the terminal.
         axRepairItem.isHidden = permissions.axTrusted
-            || Bundle.main.bundleIdentifier != "com.tutorintelligence.tingle"
+            || Bundle.main.bundleIdentifier != AppIdentity.bundleID
     }
 
     @objc private func fixMicrophonePermission() {
@@ -578,10 +565,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     // MARK: - Config file
 
-    @objc private func checkForUpdates() {
-        updater.checkForUpdates()
-    }
-
     @objc private func openConfigFile() {
         NSWorkspace.shared.open(ConfigStore.configURL)
     }
@@ -633,7 +616,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     /// only the user's menu toggle changes it. Never for the dev binary
     /// (SMAppService needs a bundled .app).
     private func registerLaunchAtLoginOnFirstRun() {
-        guard Bundle.main.bundleIdentifier == "com.tutorintelligence.tingle",
+        guard Bundle.main.bundleIdentifier == AppIdentity.bundleID,
               !Prefs.suite.bool(forKey: "launchAtLoginConfigured") else { return }
         Prefs.suite.set(true, forKey: "launchAtLoginConfigured")
         do {

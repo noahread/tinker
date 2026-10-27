@@ -54,7 +54,16 @@ public enum TingleApp {
 
 
 enum Log {
+    /// Kept as upstream's subsystem on purpose: it is only a log filter and
+    /// changing it would touch every `log stream` predicate in the docs.
     static let subsystem = "com.tutorintelligence.tingle"
+}
+
+/// tinker's own identity (distinct from upstream tingle so macOS keeps
+/// separate TCC rows and preferences for the two apps).
+public enum AppIdentity {
+    public static let bundleID = "com.noahread.tinker"
+    public static let displayName = "tinker"
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {

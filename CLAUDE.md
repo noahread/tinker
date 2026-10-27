@@ -1,9 +1,19 @@
-# tingle — agent guide
+# tinker — agent guide
 
 macOS menu bar app that turns the Teenage Engineering EP-2350 "ting" into a
-dictation/macro device. Swift (SwiftPM) on the Mac + a MicroPython payload
-that runs on the device itself. See DESIGN.md for architecture and the chirp
-protocol; README.md for user-facing docs.
+smart push-to-talk controller: squeezing the handle drives the frontmost
+app's own dictation shortcut (Claude ⌘D, Codex, …), falls back to a running
+transcription app (MacWhisper, Handy), and finally to built-in on-device
+dictation. Fork of [tutorintelligence/tingle](https://github.com/tutorintelligence/tingle)
+(MIT). Swift (SwiftPM) on the Mac + a MicroPython payload that runs on the
+device itself. See DESIGN.md for architecture and the chirp protocol;
+README.md for user-facing docs.
+
+Upstream remote: `upstream` → tutorintelligence/tingle. Module/target names
+(`TingleCore`, `tingle`, `tingle-tests`), `Log.subsystem`, and the config
+folder `~/Library/Application Support/tingle` are deliberately kept as
+upstream's so `git merge upstream/main` stays cheap. Only user-facing
+strings and the bundle id (`AppIdentity.bundleID`) are tinker's.
 
 ## Build, test, run
 
@@ -11,38 +21,31 @@ protocol; README.md for user-facing docs.
 swift build                      # compile
 swift run tingle-tests            # Swift unit tests (no XCTest: bare CLT works)
 python3 tools/test_payload.py    # device event-engine unit tests
-python3 tools/test_next_version.py  # release version-bump logic
-scripts/bundle.sh                # assemble dist/tingle.app (ad-hoc unless CODESIGN_IDENTITY set)
+scripts/bundle.sh                # assemble dist/tinker.app (ad-hoc unless CODESIGN_IDENTITY set)
 swift run tingle                  # run the menu bar app (dev)
+scripts/dev.sh                   # quit the installed app, build + run the dev binary
 ```
 
 CI (.github/workflows/ci.yml) runs all of the above plus a payload-sync
-check. Both test suites must pass before any commit that touches detection,
-dictation, or the device payload. Add a regression test with every bug fix.
+check. Both test suites must pass before any commit that touches routing,
+detection, dictation, or the device payload. Add a regression test with
+every bug fix.
 
-## Iteration workflow (with Josh)
+## Routing (tinker's addition)
 
-- THE ITERATION LOOP (Josh's standing directive — NEVER ship straight
-  to prod). For any behavior change:
-    1. Implement + unit/fixture tests green locally.
-    2. `scripts/dev.sh` — switches Josh onto the dev binary (kills the
-       installed app, force-killing if wedged; builds; launches; FAILS
-       LOUDLY if the dev binary dies at startup instead of silently
-       leaving the wrong instance running).
-    3. ASK JOSH TO TRY IT and wait for his verdict; watch logs while he
-       tests (Monitor on the log stream).
-    4. Only after his all-clear: PR → merge → release.
-    5. After the release exists: `scripts/dev.sh --stop`, update the
-       installed app to the new release, and leave Josh in release mode.
-  Commit-then-PR without a live dev test is a process violation, not a
-  shortcut. Only one tingle may run at a time (flock in App Support);
-  always switch modes via the script, never by hand.
-- Keep a log stream running for live debugging:
+- `RouteResolver.swift` is pure: frontmost bundle id + running bundle ids +
+  config → `Route`. `RouteSession` remembers the route chosen at squeeze so
+  the release closes the SAME app's toggle even if focus moved. Keep both
+  AppKit-free and covered by `Tests/tingle-tests/RouteResolverTests.swift`.
+- Lifecycle invariant from upstream still holds: a release ALWAYS releases
+  held keys and stops built-in dictation before any route `up` action.
+- Config: `[apps."<bundle id>"]` tables merge per app with the defaults;
+  a user `[[fallback]]` array replaces the default list wholesale; "builtin"
+  is simply `[mappings] triggerDown/triggerUp`.
+- Log stream for live debugging:
   `log stream --predicate 'subsystem == "com.tutorintelligence.tingle"' --info --debug`
   Note: info/debug lines do NOT persist for `log show` — stream to a file.
-- Debugging doctrine: Josh's observations of his own hardware are ground
-  truth. Instrument and reproduce; never theorize against his report.
-  Land the fix with a committed regression test.
+- Only one tinker/tingle may run at a time (flock in App Support).
 
 ## Device payload rules (device/tingle_main.py)
 
@@ -137,39 +140,15 @@ dictation, or the device payload. Add a regression test with every bug fix.
 ## Captured audio rule
 
 NEVER commit audio recorded from the ting (or any capture device)
-without Josh's explicit per-file approval — the ting is a microphone
+without Noah's explicit per-file approval — the ting is a microphone
 with passthrough, so "sensor data" recordings can carry his voice.
-Stage candidates in a folder, `open` it in Finder for him to inspect,
+Stage candidates in a folder, `open` it in Finder for them to inspect,
 and prefer hard FFT-masked (>15kHz-only) versions for fixtures.
 
 ## Contribution flow
 
-main is protected: squash-merge only, PRs required, CI (`test`) must pass.
-PR titles must be Conventional Commits (`feat:`, `fix:`, `perf:`,
-`refactor:`, `chore:`, `docs:`, `ci:`, `build:`, `test:`, `style:`) with a
-lowercase subject — enforced by .github/workflows/pr-title.yml. Since squash
-merges use the PR title as the commit subject, that title drives versioning.
-
-Work on a branch, `gh pr create`, let CI + title-lint pass, squash-merge.
-Claude cannot push to main directly.
-
-## Release (automated)
-
-.github/workflows/auto-release.yml runs on every push to main: it computes
-the next semver from the merge subject via `tools/next_version.py`
-(feat→minor, fix/perf/refactor→patch, `!`/BREAKING→major, chore/docs/ci/
-build/test/style→no release), then builds → signs+notarizes (if the Apple
-secrets exist) → signs the zip with the Sparkle EdDSA key and publishes
-appcast.xml to the gh-pages branch (in-app auto-updates; feed URL and
-public key live in scripts/bundle.sh's Info.plist; private key is in the
-SPARKLE_ED_PRIVATE_KEY repo secret and Josh's login keychain, account
-"tingle") → tags → GitHub Release with the .app zip → bumps the cask in
-tutorintelligence/homebrew-tap. `tools/test_next_version.py` covers the
-version math. Release builds are Developer ID-signed, notarized, and
-stapled (hardened runtime + entitlements in packaging/entitlements.plist;
-Sparkle nested executables signed inside-out — the bare Autoupdate binary
-is the one notarization rejects when missed). Secrets: MACOS_CERT_P12_BASE64,
-MACOS_CERT_PASSWORD, NOTARY_KEY / NOTARY_KEY_ID / NOTARY_ISSUER_ID (App
-Store Connect API key — the team Apple ID is Microsoft-federated, so
-app-specific passwords are unavailable), TAP_DEPLOY_KEY (SSH deploy key
-that pushes the cask bump to tutorintelligence/homebrew-tap).
+Commit directly on `main` or on short-lived branches; Conventional Commit
+subjects (`feat:`, `fix:`, `chore:`, …) are preferred but not enforced.
+There is no automated release: `scripts/bundle.sh` builds `dist/tinker.app`,
+copy it to /Applications. Set `CODESIGN_IDENTITY` for a stable signature so
+macOS keeps the Microphone/Accessibility grants across rebuilds.
