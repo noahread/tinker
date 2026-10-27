@@ -273,7 +273,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         if route.kind == .app {
             fallbackRouteItem.title = "Elsewhere: \(RouteResolver.describe(fallback))"
         } else if fallback.kind == .fallback {
-            fallbackRouteItem.title = "Fallback: \(fallback.name) is running"
+            let next = RouteResolver.fallback(running: running.subtracting([fallback.bundleId ?? ""]), config: config)
+            fallbackRouteItem.title = "If \(fallback.name) quits: \(RouteResolver.describe(next))"
         } else {
             let names = config.fallback.compactMap(\.name)
             fallbackRouteItem.title = names.isEmpty
