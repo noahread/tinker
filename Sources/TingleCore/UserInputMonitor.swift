@@ -29,6 +29,9 @@ public enum SyntheticEvents {
 /// path independently requires accessibility before typing anything).
 final class UserInputMonitor {
     var onUserInput: (() -> Void)?
+    /// tinker: any keyDown from another process (including another app's
+    /// synthetic typing, e.g. MacWhisper delivering a transcript).
+    var onExternalKeyDown: (() -> Void)?
     private var monitor: Any?
 
     func start() {
@@ -37,7 +40,11 @@ final class UserInputMonitor {
             matching: [.keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown]
         ) { [weak self] event in
             if let cg = event.cgEvent, SyntheticEvents.isSynthetic(cg) { return }
-            DispatchQueue.main.async { self?.onUserInput?() }
+            let isKey = event.type == .keyDown
+            DispatchQueue.main.async {
+                if isKey { self?.onExternalKeyDown?() }
+                self?.onUserInput?()
+            }
         }
     }
 

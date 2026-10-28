@@ -108,4 +108,14 @@ func runRouteResolverTests() {
         _ = s.press(app)
         expectEqual(s.release(running: []), app.up, "session: app routes close even if not running")
     }
+    // 12. send chord: per-app override, else the routing default.
+    do {
+        expectEqual(RouteResolver.sendChord(frontmost: claude, config: config), KeyChord(key: "return"), "send: claude returns")
+        expectEqual(RouteResolver.sendChord(frontmost: "com.linear", config: config),
+                    KeyChord(key: "return", modifiers: ["cmd"]), "send: linear cmd+return")
+        expectEqual(RouteResolver.sendChord(frontmost: safari, config: config), KeyChord(key: "return"), "send: unknown app uses default")
+        var c = config
+        c.routing.send = KeyChord(key: "return", modifiers: ["cmd"])
+        expectEqual(RouteResolver.sendChord(frontmost: nil, config: c), c.routing.send, "send: routing default honoured")
+    }
 }

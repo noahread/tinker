@@ -73,6 +73,7 @@ public enum RouteResolver {
         case .shell?: return "shell"
         case .dictate?: return "dictate"
         case .eraseDictation?: return "erase"
+        case .send?: return "send"
         case nil: return "nothing"
         }
     }
@@ -118,8 +119,15 @@ public enum RouteResolver {
         case .keyHold(let key, let modifiers)?: summary = KeyCodes.symbol(key: key, modifiers: modifiers) + " (hold)"
         case .shell?: summary = "shell"
         case .eraseDictation?: summary = "erase"
+        case .send?: summary = "send"
         }
         return Route(kind: .builtin, name: builtinName, bundleId: nil, down: down, up: up, summary: summary)
+    }
+
+    /// The chord the `send` action presses in the frontmost app.
+    public static func sendChord(frontmost: String?, config: TingConfig) -> KeyChord {
+        if let id = frontmost, let chord = config.apps[id]?.send { return chord }
+        return config.routing.send
     }
 
     /// "Claude → ⌘D (toggle)" / "built-in dictation".

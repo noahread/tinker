@@ -17,6 +17,11 @@ public enum TingAction: Equatable {
     /// Erase the last completed dictation take (repeat presses peel back
     /// earlier takes). Default on the green button (modeChange).
     case eraseDictation
+    /// tinker: submit what was dictated using the frontmost app's send
+    /// shortcut (`[apps."…"] send`, else `[routing] send`, default ↩).
+    /// Waits briefly for a late-arriving transcript from a fallback
+    /// transcription app. Default on the orange button (fxChange).
+    case send
 
     /// Short human-readable description (menu display).
     public var summary: String {
@@ -31,6 +36,8 @@ public enum TingAction: Equatable {
             return "dictate (live transcription)"
         case .eraseDictation:
             return "erase last dictation"
+        case .send:
+            return "send (app's submit shortcut)"
         }
     }
 }
@@ -60,10 +67,12 @@ extension TingAction: Codable {
             self = .dictate
         case "eraseDictation":
             self = .eraseDictation
+        case "send":
+            self = .send
         default:
             throw DecodingError.dataCorruptedError(
                 forKey: .type, in: container,
-                debugDescription: "unknown action type \"\(type)\" (expected \"keystroke\", \"shell\", \"keyHold\", \"dictate\" or \"eraseDictation\")"
+                debugDescription: "unknown action type \"\(type)\" (expected \"keystroke\", \"shell\", \"keyHold\", \"dictate\", \"eraseDictation\" or \"send\")"
             )
         }
     }
@@ -86,6 +95,8 @@ extension TingAction: Codable {
             try container.encode("dictate", forKey: .type)
         case .eraseDictation:
             try container.encode("eraseDictation", forKey: .type)
+        case .send:
+            try container.encode("send", forKey: .type)
         }
     }
 }
@@ -122,6 +133,28 @@ public struct RewriteConfig: Decodable, Equatable {
         technicalFormatting = try c.decodeIfPresent(Bool.self, forKey: .technicalFormatting) ?? true
         customInstructions = try c.decodeIfPresent(String.self, forKey: .customInstructions) ?? ""
     }
+}
+
+/// A plain key chord (`{ key = "return", modifiers = ["cmd"] }`).
+public struct KeyChord: Decodable, Equatable {
+    public var key: String
+    public var modifiers: [String]
+
+    public init(key: String, modifiers: [String] = []) {
+        self.key = key
+        self.modifiers = modifiers
+    }
+
+    private enum CodingKeys: String, CodingKey { case key, modifiers }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        key = try c.decode(String.self, forKey: .key)
+        modifiers = try c.decodeIfPresent([String].self, forKey: .modifiers) ?? []
+    }
+
+    public var symbol: String { KeyCodes.symbol(key: key, modifiers: modifiers) }
+    public var keystroke: TingAction { .keystroke(key: key, modifiers: modifiers) }
 }
 
 /// How an app's own dictation is driven from the handle. `toggle` presses
@@ -168,20 +201,24 @@ public struct AppProfile: Decodable, Equatable {
     public var dictation: DictationShortcut?
     public var triggerDown: TingAction?
     public var triggerUp: TingAction?
+    /// This app's submit shortcut for the `send` action (default: `[routing] send`).
+    public var send: KeyChord?
 
     public init(name: String? = nil, bundleId: String? = nil, requireRunning: Bool = true,
                 dictation: DictationShortcut? = nil,
-                triggerDown: TingAction? = nil, triggerUp: TingAction? = nil) {
+                triggerDown: TingAction? = nil, triggerUp: TingAction? = nil,
+                send: KeyChord? = nil) {
         self.name = name
         self.bundleId = bundleId
         self.requireRunning = requireRunning
         self.dictation = dictation
         self.triggerDown = triggerDown
         self.triggerUp = triggerUp
+        self.send = send
     }
 
     private enum CodingKeys: String, CodingKey {
-        case name, bundleId, requireRunning, dictation, triggerDown, triggerUp
+        case name, bundleId, requireRunning, dictation, triggerDown, triggerUp, send
     }
 
     public init(from decoder: Decoder) throws {
@@ -192,6 +229,7 @@ public struct AppProfile: Decodable, Equatable {
         dictation = try c.decodeIfPresent(DictationShortcut.self, forKey: .dictation)
         triggerDown = try c.decodeIfPresent(TingAction.self, forKey: .triggerDown)
         triggerUp = try c.decodeIfPresent(TingAction.self, forKey: .triggerUp)
+        send = try c.decodeIfPresent(KeyChord.self, forKey: .send)
     }
 }
 
@@ -203,16 +241,26 @@ public struct RoutingConfig: Decodable, Equatable {
     /// handle is held, so the external app records the ting's mic.
     public var switchDefaultInput = false
     public var showWaveform = true
+    /// Submit shortcut for apps without their own `send`.
+    public var send = KeyChord(key: "return")
+    /// After a fallback transcription app finishes, how long `send` will
+    /// wait for its transcript to START arriving before giving up and
+    /// sending anyway. Once typing is seen, send fires after 0.5s of quiet.
+    public var sendSettleSeconds: Double = 2.5
 
     public init() {}
 
-    private enum CodingKeys: String, CodingKey { case enabled, switchDefaultInput, showWaveform }
+    private enum CodingKeys: String, CodingKey {
+        case enabled, switchDefaultInput, showWaveform, send, sendSettleSeconds
+    }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
         switchDefaultInput = try c.decodeIfPresent(Bool.self, forKey: .switchDefaultInput) ?? false
         showWaveform = try c.decodeIfPresent(Bool.self, forKey: .showWaveform) ?? true
+        send = try c.decodeIfPresent(KeyChord.self, forKey: .send) ?? KeyChord(key: "return")
+        sendSettleSeconds = try c.decodeIfPresent(Double.self, forKey: .sendSettleSeconds) ?? 2.5
     }
 }
 
@@ -396,6 +444,8 @@ public final class ConfigStore {
     #                                            valid on triggerDown)
     #   { type = "eraseDictation" }              erase the last dictated take;
     #                                            press again for earlier takes
+    #   { type = "send" }                        submit with the frontmost app's
+    #                                            send shortcut (see [routing])
     #   { type = "keystroke", key = "return", modifiers = ["cmd"] }
     #   { type = "keyHold",   key = "f5" }       held until handle release
     #   { type = "shell",     command = "..." }  run with /bin/zsh -lc
@@ -510,8 +560,10 @@ public final class ConfigStore {
     # Squeeze to dictate into whatever app is focused.
     triggerDown = { type = "dictate" }
 
-    # Orange: send it.
-    fxChange = { type = "keystroke", key = "return" }
+    # Orange: send it - the frontmost app's submit shortcut ([apps."…"] send,
+    # else [routing] send). After MacWhisper/Handy finish, it waits for the
+    # transcript to land before pressing.
+    fxChange = { type = "send" }
 
     # Green: scrap that take (press again for the take before it).
     modeChange = { type = "eraseDictation" }
@@ -557,16 +609,34 @@ public final class ConfigStore {
     enabled = true
     switchDefaultInput = false   # make the ting's adapter the system input while held
     showWaveform = true
+    # What the orange button presses to submit, unless the frontmost app's
+    # profile has its own `send`. Return submits a chat prompt or a web
+    # form field; apps that treat Return as a newline want cmd+Return.
+    send = { key = "return" }
+    sendSettleSeconds = 2.5      # max wait for a fallback app's transcript to start arriving
 
     [apps."com.anthropic.claudefordesktop"]
     name = "Claude"
     dictation = { mode = "toggle", key = "d", modifiers = ["cmd"] }
+    send = { key = "return" }
 
     [apps."com.openai.codex"]
     name = "Codex"
     # Codex's dictation key is set in Codex settings; bind its "press to
     # dictate" key to F18 there and keep this in sync.
     dictation = { mode = "hold", key = "f18" }
+    send = { key = "return" }
+
+    # Apps where Return inserts a newline and cmd+Return submits. These have
+    # no dictation of their own, so a squeeze there uses the fallback list;
+    # only `send` matters.
+    [apps."com.apple.mail"]
+    name = "Mail"
+    send = { key = "d", modifiers = ["cmd", "shift"] }
+
+    [apps."com.linear"]
+    name = "Linear"
+    send = { key = "return", modifiers = ["cmd"] }
 
     [[fallback]]
     name = "MacWhisper"

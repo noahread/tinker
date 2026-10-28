@@ -268,7 +268,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             frontmost: frontmost?.bundleIdentifier, frontmostName: frontmost?.localizedName,
             running: running, config: config)
         let appName = frontmost?.localizedName ?? "(no app)"
-        frontmostRouteItem.title = "Squeeze in \(appName): \(RouteResolver.describe(route))"
+        let send = RouteResolver.sendChord(frontmost: frontmost?.bundleIdentifier, config: config)
+        frontmostRouteItem.title = "Squeeze in \(appName): \(RouteResolver.describe(route)) · orange sends \(send.symbol)"
         let fallback = RouteResolver.fallback(running: running, config: config)
         if route.kind == .app {
             fallbackRouteItem.title = "Elsewhere: \(RouteResolver.describe(fallback))"

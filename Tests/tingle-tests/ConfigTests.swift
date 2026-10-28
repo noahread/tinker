@@ -7,7 +7,7 @@ func runConfigTests() {
         expect(config.routing.enabled, "routing: enabled by default")
         expect(!config.routing.switchDefaultInput, "routing: input switch off by default")
         expect(config.routing.showWaveform, "routing: waveform on by default")
-        expectEqual(config.apps.count, 2, "routing: two app profiles shipped")
+        expectEqual(config.apps.count, 4, "routing: four app profiles shipped")
         expectEqual(config.apps["com.anthropic.claudefordesktop"]?.dictation,
                     DictationShortcut(mode: .toggle, key: "d", modifiers: ["cmd"]), "routing: claude profile")
         expectEqual(config.apps["com.openai.codex"]?.dictation,
@@ -20,7 +20,7 @@ func runConfigTests() {
         name = "Safari"
         dictation = { mode = "toggle", key = "f17" }
         """)
-        expectEqual(overlay.apps.count, 3, "routing: user app table merges per app")
+        expectEqual(overlay.apps.count, 5, "routing: user app table merges per app")
         expect(overlay.apps["com.anthropic.claudefordesktop"] != nil, "routing: defaults survive app overlay")
 
         let replaced = try! TingConfig.parse(defaults: ConfigStore.defaultTOML, user: """
@@ -51,7 +51,10 @@ func runConfigTests() {
                     "config: effective vocabulary is builtin when extras empty")
         expectEqual(config.mappings["triggerDown"], .dictate, "config: default trigger mapping")
         expectEqual(config.mappings["modeChange"], .eraseDictation, "config: default green mapping")
-        expectEqual(config.mappings["fxChange"], .keystroke(key: "return", modifiers: []), "config: default orange mapping")
+        expectEqual(config.mappings["fxChange"], .send, "config: default orange mapping is send")
+        expectEqual(config.routing.send, KeyChord(key: "return"), "config: default send chord is return")
+        expectEqual(config.routing.sendSettleSeconds, 2.5, "config: default send settle")
+        expectEqual(config.apps["com.linear"]?.send, KeyChord(key: "return", modifiers: ["cmd"]), "config: linear sends cmd+return")
         expect(config.mappings["mode1"] == nil, "config: no per-mode white mappings by default")
         if case .shell(let cmd)? = config.mappings["white"] {
             expect(cmd.contains("is running") && cmd.contains("activate"),

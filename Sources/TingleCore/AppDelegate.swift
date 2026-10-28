@@ -77,6 +77,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// tinker: the route the current squeeze drives (see RouteResolver).
     private var routeSession = RouteSession()
     private let inputSwitcher = DefaultInputSwitcher()
+    /// SendGate inputs: when a fallback transcriber was last released and
+    /// when another process last typed.
+    private var lastFallbackClosedAt: Date?
+    private var lastExternalKeyAt: Date?
+    private var pendingSend: Timer?
 
     private let log = Logger(subsystem: Log.subsystem, category: "app")
 
@@ -103,6 +108,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItemController.onSimulatedEvent = { [weak self] event in self?.handle(event: event) }
         userInputMonitor.onUserInput = { [weak self] in
             self?.dictation.contentMoved()
+        }
+        userInputMonitor.onExternalKeyDown = { [weak self] in
+            self?.lastExternalKeyAt = Date()
         }
         userInputMonitor.start()
         dictation.onRewriteActive = { [weak self] active in
@@ -215,6 +223,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        if action == .send {
+            performSend()
+            return
+        }
+
         // A typing action while dictation is live changes the text field
         // under the typer; freeze what's on screen first so corrections
         // can't backspace over it (the overwrite bug).
@@ -287,10 +300,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Orange: submit with the frontmost app's send chord, after any
+    /// late-arriving transcript has landed (see SendGate).
+    private func performSend() {
+        pendingSend?.invalidate()
+        let frontmost = NSWorkspace.shared.frontmostApplication
+        let chord = RouteResolver.sendChord(frontmost: frontmost?.bundleIdentifier, config: configStore.config)
+        let pressedAt = Date()
+        let settle = configStore.config.routing.sendSettleSeconds
+        let appName = frontmost?.localizedName ?? "?"
+        let attempt: (Timer?) -> Void = { [weak self] timer in
+            guard let self else { timer?.invalidate(); return }
+            let decision = SendGate.decide(
+                now: Date(), fallbackClosedAt: self.lastFallbackClosedAt,
+                lastExternalKeyAt: self.lastExternalKeyAt, sendPressedAt: pressedAt,
+                settleSeconds: settle)
+            guard decision == .fire else { return }
+            timer?.invalidate()
+            self.pendingSend = nil
+            let waited = Date().timeIntervalSince(pressedAt)
+            self.log.info("send: \(chord.symbol, privacy: .public) → \(appName, privacy: .public)\(waited > 0.2 ? String(format: " (after %.1fs settle)", waited) : "", privacy: .public)")
+            self.dictation.contentMoved()
+            self.actionRunner.run(chord.keystroke)
+        }
+        attempt(nil)
+        guard pendingSend == nil, SendGate.decide(
+            now: Date(), fallbackClosedAt: lastFallbackClosedAt, lastExternalKeyAt: lastExternalKeyAt,
+            sendPressedAt: pressedAt, settleSeconds: settle) == .wait else { return }
+        statusItemController.setDictationStatus("Waiting for the transcript before sending…")
+        let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] t in
+            attempt(t)
+            if self?.pendingSend == nil { self?.statusItemController.setDictationStatus(nil) }
+        }
+        pendingSend = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
     /// Release: fire the remembered route's up action (once) and tidy up.
     private func closeRoute() {
         let route = routeSession.active
         let up = routeSession.release(running: runningBundleIDs())
+        if route?.kind == .fallback { lastFallbackClosedAt = Date() }
         statusItemController.setActiveRoute(nil)
         // Built-in dictation owns its status line ("Inserted N words");
         // only clear the accessibility warning an external route may have set.

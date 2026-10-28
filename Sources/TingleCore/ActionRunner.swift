@@ -32,6 +32,9 @@ final class ActionRunner {
         case .eraseDictation:
             // Routed by AppDelegate to DictationController — never expected here.
             log.error("eraseDictation action reached ActionRunner; routing bug")
+        case .send:
+            // Resolved per frontmost app by AppDelegate.performSend — never expected here.
+            log.error("send action reached ActionRunner; routing bug")
         }
     }
 
