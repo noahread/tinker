@@ -13,6 +13,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let coordinator: DetectionCoordinator
     private let permissions: PermissionsMonitor
 
+    private let setupWindow = SetupWindow()
     private let statusItem: NSStatusItem
     private let statusLineItem = NSMenuItem(title: BackendState.idle.menuDescription, action: nil, keyEquivalent: "")
     private let batteryItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
@@ -108,6 +109,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         menu.addItem(simulateItem)
         menu.addItem(.separator())
 
+        let setupItem = NSMenuItem(title: "Setup…", action: #selector(openSetup), keyEquivalent: ",")
+        setupItem.target = self
+        menu.addItem(setupItem)
+
         // Permission problems (hidden while everything is granted).
         micPermissionItem.target = self
         micPermissionItem.isHidden = true
@@ -135,7 +140,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
         // All configuration is the JSON file (live-reloaded on save);
         // this opens it in the default editor.
-        let editConfigItem = NSMenuItem(title: "Edit config…", action: #selector(openConfigFile), keyEquivalent: ",")
+        let editConfigItem = NSMenuItem(title: "Edit config…", action: #selector(openConfigFile), keyEquivalent: "")
         let viewDefaultsItem = NSMenuItem(title: "View default config…", action: #selector(openDefaultConfigFile), keyEquivalent: "")
         editConfigItem.target = self
         menu.addItem(editConfigItem)
@@ -569,19 +574,15 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         // carries the steps until the boot disk appears.
         firmwareInstructions?.close()
         firmwareInstructions = FloatingAlert.show(
-            title: newDevice
-                ? "New ting — firmware upgrade first"
-                : "Put the ting in firmware mode",
+            title: newDevice ? "Set up your ting" : "Prepare your ting",
             text: """
-            1.  Take off the ting's lower lid. Keep USB connected.
-            2.  Squeeze the handle — and KEEP IT SQUEEZED through every \
-            step until this card disappears.
-            3.  Still squeezing, DOUBLE-CLICK the small button above the \
-            USB port — two quick presses in rapid succession, like a \
-            mouse double-click. (Two slow separate presses just \
-            power-cycles it.)
-            4.  A disk named TING BOOT appears and tingle does the rest — \
-            you can let go when this card closes.
+            Connect USB and remove the lower lid.
+
+            Squeeze and hold the handle. Keep holding until setup tells you to release it.
+
+            While holding, rapidly double-click the small button above the USB port, like a mouse double-click.
+
+            Setup continues automatically when the TING BOOT disk appears. Two slow presses will only power-cycle the device.
             """, showsOK: false)
         setFirmwareStatus("Firmware upgrade: starting…")
         FirmwareUpgrader.upgrade(
@@ -661,6 +662,18 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     private func presentError(_ title: String, _ error: Error) {
         FloatingAlert.show(title: title, text: error.localizedDescription)
+    }
+
+    @objc func openSetup() {
+        setupWindow.show(permissions: permissions) { [weak self] in
+            guard let self else { return }
+            self.updateTingleiskItems()
+            guard self.flashItem.isEnabled else {
+                FloatingAlert.show(title: "Connect your ting", text: "Connect your ting with USB and wait for it to appear before starting setup. If an update is already running, wait for it to finish.")
+                return
+            }
+            self.flashEP()
+        }
     }
 
     // MARK: - Config file
