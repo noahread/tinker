@@ -4,22 +4,56 @@ import SwiftUI
 /// The Settings window (tinker): apps with their own dictation, the
 /// fallback transcription apps, and the routing switches. Every change is
 /// saved and re-layered into the live config immediately.
+/// Setup-time state and actions the Device tab shows, fed by
+/// StatusItemController (which owns the coordinator, flasher and
+/// permissions). Keeps the menu bar menu to day-to-day items.
+final class DeviceModel: ObservableObject {
+    @Published var statusText = ""
+    @Published var batteryText: String?
+    @Published var diskMounted = false
+    @Published var isFlashing = false
+    @Published var flashStatus: String?
+    @Published var flashTitle = "Flash EP…"
+    @Published var firmwareText = ""
+    @Published var firmwareUpgradeAvailable = false
+    @Published var inputDevices: [(name: String, uid: String)] = []
+    @Published var pinnedUID: String?
+    @Published var micGranted = true
+    @Published var accessibilityGranted = true
+    @Published var version = ""
+
+    var onFlash: () -> Void = {}
+    var onRestore: () -> Void = {}
+    var onUpgradeFirmware: () -> Void = {}
+    var onSelectInput: (String?) -> Void = { _ in }
+    var onCopyDiagnostics: () -> Void = {}
+    var onSimulate: () -> Void = {}
+    var onOpenConfig: () -> Void = {}
+    var onOpenDefaults: () -> Void = {}
+    var onFixMic: () -> Void = {}
+    var onFixAccessibility: () -> Void = {}
+}
+
 final class SettingsWindowController {
     private var window: NSWindow?
     private let model: SettingsModel
+    private let device: DeviceModel
+    private var pendingTab: SettingsTab?
 
-    init(configStore: ConfigStore) {
+    init(configStore: ConfigStore, device: DeviceModel) {
         model = SettingsModel(configStore: configStore)
+        self.device = device
     }
 
-    func show() {
+    func show(tab: SettingsTab? = nil) {
+        if let tab { model.selectedTab = tab }
         if window == nil {
-            let hosting = NSHostingController(rootView: SettingsView(model: model))
+            let hosting = NSHostingController(rootView: SettingsView(model: model, device: device))
             let w = NSWindow(contentViewController: hosting)
             w.title = "tinker Settings"
             w.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-            w.setContentSize(NSSize(width: 860, height: 560))
-            w.minSize = NSSize(width: 720, height: 440)
+            w.setContentSize(NSSize(width: 960, height: 640))
+            w.minSize = NSSize(width: 840, height: 540)
             w.isReleasedWhenClosed = false
             w.center()
             window = w
@@ -30,12 +64,15 @@ final class SettingsWindowController {
     }
 }
 
+enum SettingsTab: Hashable { case apps, fallback, general, device }
+
 final class SettingsModel: ObservableObject {
     @Published var settings: AppSettings {
         didSet { scheduleSave() }
     }
     @Published var selectedApp: String?
     @Published var selectedFallback: String?
+    @Published var selectedTab: SettingsTab = .apps
 
     private let store = SettingsStore()
     private let configStore: ConfigStore
@@ -131,19 +168,111 @@ final class SettingsModel: ObservableObject {
 
 // MARK: - Views
 
+private enum SettingsSpacing {
+    static let window: CGFloat = 24
+    static let pane: CGFloat = 20
+    static let editor: CGFloat = 8
+    static let controls: CGFloat = 14
+    static let row: CGFloat = 4
+}
+
 struct SettingsView: View {
     @ObservedObject var model: SettingsModel
+    @ObservedObject var device: DeviceModel
 
     var body: some View {
-        TabView {
+        TabView(selection: $model.selectedTab) {
             AppsTab(model: model)
                 .tabItem { Label("Apps", systemImage: "app.badge") }
+                .tag(SettingsTab.apps)
             FallbacksTab(model: model)
                 .tabItem { Label("Fallback", systemImage: "waveform") }
+                .tag(SettingsTab.fallback)
             GeneralTab(model: model)
                 .tabItem { Label("General", systemImage: "gearshape") }
+                .tag(SettingsTab.general)
+            DeviceTab(device: device)
+                .tabItem { Label("Device", systemImage: "mic") }
+                .tag(SettingsTab.device)
         }
-        .padding(12)
+        .padding(SettingsSpacing.window)
+    }
+}
+
+/// Setup and maintenance for the ting itself: everything that used to
+/// crowd the menu bar menu but is only needed once per Mac.
+struct DeviceTab: View {
+    @ObservedObject var device: DeviceModel
+
+    var body: some View {
+        Form {
+            Section("ting") {
+                LabeledContent("Status", value: device.statusText)
+                if let battery = device.batteryText {
+                    LabeledContent("Battery", value: battery)
+                }
+                if !device.micGranted {
+                    HStack {
+                        Text("⚠️ Microphone access not granted")
+                        Spacer()
+                        Button("Fix…") { device.onFixMic() }
+                    }
+                }
+                if !device.accessibilityGranted {
+                    HStack {
+                        Text("⚠️ Accessibility access not granted")
+                        Spacer()
+                        Button("Fix…") { device.onFixAccessibility() }
+                    }
+                }
+            }
+            Section("Audio input") {
+                Picker("Listen on", selection: Binding(
+                    get: { device.pinnedUID ?? "" },
+                    set: { device.onSelectInput($0.isEmpty ? nil : $0) })) {
+                    Text("Automatic (find the ting's heartbeat)").tag("")
+                    ForEach(device.inputDevices, id: \.uid) { d in Text(d.name).tag(d.uid) }
+                }
+                Text("The USB audio adapter the ting's 3.5mm cable is plugged into. Automatic works when the adapter's name contains \"line in\"; otherwise pick it here once.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            Section("Setup (dock the ting over USB-C)") {
+                HStack {
+                    Button(device.flashTitle) { device.onFlash() }
+                        .disabled(!device.diskMounted || device.isFlashing)
+                    Text(device.diskMounted ? "TINGDISK is mounted." : "Plug the ting into the Mac over USB-C to enable.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                HStack {
+                    Button("Upgrade ting firmware…") { device.onUpgradeFirmware() }
+                        .disabled(!device.firmwareUpgradeAvailable || device.isFlashing)
+                    Text(device.firmwareText).font(.caption).foregroundStyle(.secondary)
+                }
+                HStack {
+                    Button("Restore stock") { device.onRestore() }
+                        .disabled(!device.diskMounted || device.isFlashing)
+                    Text("Removes the event engine and tones from the ting's disk.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                if let status = device.flashStatus {
+                    Text(status).font(.caption)
+                }
+                Text("Flash EP installs tinker's event engine and inaudible signal tones on the ting (one-time; a new ting gets the firmware upgrade first). A ting set up on another Mac is recognised automatically.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            Section("Tools") {
+                HStack {
+                    Button("Simulate squeeze (2 s)") { device.onSimulate() }
+                    Button("Copy diagnostics") { device.onCopyDiagnostics() }
+                    Button("Open config.toml") { device.onOpenConfig() }
+                    Button("View default config") { device.onOpenDefaults() }
+                }
+                Text("Simulate squeeze routes exactly like a real one for the app you came from. These are also in the menu bar menu while holding ⌥.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                LabeledContent("Version", value: device.version)
+            }
+        }
+        .formStyle(.grouped)
     }
 }
 
@@ -163,7 +292,7 @@ struct AppsTab: View {
 
     var body: some View {
         HSplitView {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: SettingsSpacing.controls) {
                 Text("When one of these is in front, squeezing drives its own dictation shortcut. The white button presses its send key.")
                     .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 List(selection: $model.selectedApp) {
@@ -176,6 +305,7 @@ struct AppsTab: View {
                                 Text(summary(for: app)).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                             }
                         }
+                        .padding(.vertical, SettingsSpacing.row)
                         .tag(app.id)
                     }
                 }
@@ -184,8 +314,8 @@ struct AppsTab: View {
                     Button("Remove") { model.removeSelectedApp() }.disabled(model.selectedApp == nil)
                 }
             }
+            .padding(SettingsSpacing.pane)
             .frame(minWidth: 280)
-            .padding(.trailing, 8)
 
             Group {
                 if let index = model.settings.apps.firstIndex(where: { $0.id == model.selectedApp }) {
@@ -195,8 +325,8 @@ struct AppsTab: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
+            .padding(SettingsSpacing.editor)
             .frame(minWidth: 400)
-            .padding(.leading, 8)
         }
     }
 
@@ -250,7 +380,7 @@ struct FallbacksTab: View {
 
     var body: some View {
         HSplitView {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: SettingsSpacing.controls) {
                 Text("For apps without a profile, the first enabled app here that is running takes the squeeze. When none is running, tinker's built-in on-device dictation types for you.")
                     .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 List(selection: $model.selectedFallback) {
@@ -267,6 +397,7 @@ struct FallbacksTab: View {
                                 Text("running").font(.caption).foregroundStyle(.green)
                             }
                         }
+                        .padding(.vertical, SettingsSpacing.row)
                         .tag(fb.id)
                     }
                 }
@@ -278,8 +409,8 @@ struct FallbacksTab: View {
                     Button { if let id = model.selectedFallback { model.moveFallback(id, by: 1) } } label: { Image(systemName: "chevron.down") }
                 }
             }
+            .padding(SettingsSpacing.pane)
             .frame(minWidth: 280)
-            .padding(.trailing, 8)
 
             Group {
                 if let index = model.settings.fallbacks.firstIndex(where: { $0.id == model.selectedFallback }) {
@@ -289,8 +420,8 @@ struct FallbacksTab: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
+            .padding(SettingsSpacing.editor)
             .frame(minWidth: 400)
-            .padding(.leading, 8)
         }
     }
 
@@ -379,6 +510,7 @@ struct GeneralTab: View {
             }
         }
         .formStyle(.grouped)
+        .padding(SettingsSpacing.editor)
     }
 }
 

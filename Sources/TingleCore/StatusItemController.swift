@@ -47,14 +47,19 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     private let log = Logger(subsystem: Log.subsystem, category: "menu")
     private let settingsWindow: SettingsWindowController
+    private let deviceModel = DeviceModel()
+    /// Shown only while ⌥ is held when the menu opens (developer / setup
+    /// items that otherwise live in Settings › Device).
+    private var advancedItems: [NSMenuItem] = []
 
     init(configStore: ConfigStore, coordinator: DetectionCoordinator, permissions: PermissionsMonitor) {
         self.configStore = configStore
         self.coordinator = coordinator
         self.permissions = permissions
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        self.settingsWindow = SettingsWindowController(configStore: configStore)
+        self.settingsWindow = SettingsWindowController(configStore: configStore, device: deviceModel)
         super.init()
+        wireDeviceModel()
 
         permissions.onChange = { [weak self] in
             self?.updatePermissionItems()
@@ -84,6 +89,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         rebuildInputDeviceSubmenu()
         updateLaunchAtLoginState()
         refreshRouteItems()
+        let advanced = NSEvent.modifierFlags.contains(.option)
+        for item in advancedItems { item.isHidden = !advanced }
     }
 
     // MARK: - Menu construction
@@ -92,7 +99,14 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         let menu = NSMenu()
         menu.autoenablesItems = false
         menu.delegate = self
+        advancedItems.removeAll()
+        func advanced(_ item: NSMenuItem) -> NSMenuItem {
+            item.isHidden = true
+            advancedItems.append(item)
+            return item
+        }
 
+        // Day to day: what the ting is doing, and where a squeeze goes.
         statusLineItem.isEnabled = false
         menu.addItem(statusLineItem)
 
@@ -101,19 +115,16 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         menu.addItem(batteryItem)
 
         menu.addItem(.separator())
-        for item in [frontmostRouteItem, fallbackRouteItem, lastRouteItem] {
-            item.isEnabled = false
-            menu.addItem(item)
-        }
-        lastRouteItem.isHidden = true
+        frontmostRouteItem.isEnabled = false
+        menu.addItem(frontmostRouteItem)
+        fallbackRouteItem.isEnabled = false
+        menu.addItem(advanced(fallbackRouteItem))
+        lastRouteItem.isEnabled = false
+        menu.addItem(advanced(lastRouteItem))
         let simulateItem = NSMenuItem(title: "Simulate squeeze (2 s)", action: #selector(simulateSqueeze), keyEquivalent: "")
         simulateItem.target = self
-        menu.addItem(simulateItem)
+        menu.addItem(advanced(simulateItem))
         menu.addItem(.separator())
-
-        let setupItem = NSMenuItem(title: "Setup…", action: #selector(openSetup), keyEquivalent: "")
-        setupItem.target = self
-        menu.addItem(setupItem)
 
         // Permission problems (hidden while everything is granted).
         micPermissionItem.target = self
@@ -126,72 +137,33 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         axRepairItem.isHidden = true
         menu.addItem(axRepairItem)
 
+        // Setup lives in Settings › Device; ⌥ shows it here too.
         inputDeviceItem.submenu = NSMenu()
-        menu.addItem(inputDeviceItem)
-
+        menu.addItem(advanced(inputDeviceItem))
         flashItem.target = self
-        menu.addItem(flashItem)
-
+        menu.addItem(advanced(flashItem))
         restoreItem.target = self
-        menu.addItem(restoreItem)
-
+        menu.addItem(advanced(restoreItem))
         firmwareItem.target = self
-        menu.addItem(firmwareItem)
+        menu.addItem(advanced(firmwareItem))
+        menu.addItem(advanced(.separator()))
 
-        menu.addItem(.separator())
-
-        // tinker: routing is configured in the Settings window; the TOML
-        // file stays for vocabulary, replacements and button mappings.
         let settingsItem = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.target = self
         menu.addItem(settingsItem)
         let editConfigItem = NSMenuItem(title: "Edit config.toml…", action: #selector(openConfigFile), keyEquivalent: "")
-        let viewDefaultsItem = NSMenuItem(title: "View default config…", action: #selector(openDefaultConfigFile), keyEquivalent: "")
         editConfigItem.target = self
-        menu.addItem(editConfigItem)
+        menu.addItem(advanced(editConfigItem))
+        let viewDefaultsItem = NSMenuItem(title: "View default config…", action: #selector(openDefaultConfigFile), keyEquivalent: "")
         viewDefaultsItem.target = self
-        menu.addItem(viewDefaultsItem)
-
-        // One click -> a pasteable support report. Every field in it is a
-        // question we'd otherwise ask over Slack.
+        menu.addItem(advanced(viewDefaultsItem))
         let diagnosticsItem = NSMenuItem(title: "Copy diagnostics", action: #selector(copyDiagnostics), keyEquivalent: "")
         diagnosticsItem.target = self
-        menu.addItem(diagnosticsItem)
+        menu.addItem(advanced(diagnosticsItem))
 
-        // Identity line: release builds show the version; dev binaries
-        // show branch @ sha (git, resolved from the executable's repo) so
-        // it's always obvious WHICH tingle is running (multiple sessions
-        // building from different worktrees made this genuinely unclear).
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-        let identity: String
-        if let version {
-            identity = "tinker \(version)"
-        } else {
-            let repo = URL(fileURLWithPath: CommandLine.arguments[0])
-                .resolvingSymlinksInPath()
-                .deletingLastPathComponent()   // debug/
-                .deletingLastPathComponent()   // .build/
-                .deletingLastPathComponent()   // repo root
-            func git(_ args: [String]) -> String? {
-                let p = Process()
-                p.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-                p.arguments = ["-C", repo.path] + args
-                let pipe = Pipe()
-                p.standardOutput = pipe
-                p.standardError = Pipe()
-                try? p.run()
-                p.waitUntilExit()
-                let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                return (out?.isEmpty ?? true) ? nil : out
-            }
-            let branch = git(["branch", "--show-current"]) ?? "?"
-            let sha = git(["rev-parse", "--short", "HEAD"]) ?? "?"
-            identity = "tinker dev — \(branch) @ \(sha)"
-        }
-        let versionItem = NSMenuItem(title: identity, action: nil, keyEquivalent: "")
+        let versionItem = NSMenuItem(title: Self.identityString(), action: nil, keyEquivalent: "")
         versionItem.isEnabled = false
-        menu.addItem(versionItem)
+        menu.addItem(advanced(versionItem))
 
         launchAtLoginItem.target = self
         menu.addItem(launchAtLoginItem)
@@ -203,6 +175,70 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         menu.addItem(quitItem)
 
         return menu
+    }
+
+    /// Release builds show the version; dev binaries show branch @ sha so
+    /// it is always obvious WHICH build is running.
+    private static func identityString() -> String {
+        if let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String {
+            return "tinker \(version)"
+        }
+        let repo = URL(fileURLWithPath: CommandLine.arguments[0])
+            .resolvingSymlinksInPath()
+            .deletingLastPathComponent()   // debug/
+            .deletingLastPathComponent()   // .build/
+            .deletingLastPathComponent()   // repo root
+        func git(_ args: [String]) -> String? {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+            p.arguments = ["-C", repo.path] + args
+            let pipe = Pipe()
+            p.standardOutput = pipe
+            p.standardError = Pipe()
+            try? p.run()
+            p.waitUntilExit()
+            let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return (out?.isEmpty ?? true) ? nil : out
+        }
+        let branch = git(["branch", "--show-current"]) ?? "?"
+        let sha = git(["rev-parse", "--short", "HEAD"]) ?? "?"
+        return "tinker dev — \(branch) @ \(sha)"
+    }
+
+    // MARK: - Device tab feed (tinker)
+
+    private func wireDeviceModel() {
+        deviceModel.version = Self.identityString()
+        deviceModel.onFlash = { [weak self] in self?.flashEP() }
+        deviceModel.onRestore = { [weak self] in self?.restoreStock() }
+        deviceModel.onUpgradeFirmware = { [weak self] in self?.upgradeFirmware() }
+        deviceModel.onSelectInput = { [weak self] uid in
+            guard let self else { return }
+            PinnedInput.uid = uid
+            self.log.info("input device \(uid == nil ? "set to automatic" : "pinned: " + uid!, privacy: .public) (Settings)")
+            self.coordinator.inputSelectionChanged()
+            self.rebuildInputDeviceSubmenu()
+        }
+        deviceModel.onCopyDiagnostics = { [weak self] in self?.copyDiagnostics() }
+        deviceModel.onSimulate = { [weak self] in self?.simulateSqueeze() }
+        deviceModel.onOpenConfig = { [weak self] in self?.openConfigFile() }
+        deviceModel.onOpenDefaults = { [weak self] in self?.openDefaultConfigFile() }
+        deviceModel.onFixMic = { [weak self] in self?.fixMicrophonePermission() }
+        deviceModel.onFixAccessibility = { [weak self] in self?.fixAccessibilityPermission() }
+    }
+
+    private func refreshDeviceModel() {
+        deviceModel.statusText = dictationStatus ?? lastBackendState.menuDescription
+        deviceModel.diskMounted = Flasher.isTingleiskMounted
+        deviceModel.isFlashing = isFlashing
+        deviceModel.flashStatus = flashStatus
+        deviceModel.flashTitle = flashItem.title
+        deviceModel.firmwareText = firmwareItem.title
+        deviceModel.firmwareUpgradeAvailable = firmwareItem.isEnabled
+        deviceModel.pinnedUID = PinnedInput.uid
+        deviceModel.micGranted = permissions.mic == .granted
+        deviceModel.accessibilityGranted = permissions.axTrusted
     }
 
     /// While non-nil, overrides the backend state on the status line
@@ -279,7 +315,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             running: running, config: config)
         let appName = frontmost?.localizedName ?? "(no app)"
         let send = RouteResolver.sendChord(frontmost: frontmost?.bundleIdentifier, config: config)
-        frontmostRouteItem.title = "Squeeze in \(appName): \(RouteResolver.describe(route)) · orange sends \(send.symbol)"
+        frontmostRouteItem.title = "Squeeze in \(appName): \(RouteResolver.describe(route)) · white button sends \(send.symbol)"
         let fallback = RouteResolver.fallback(running: running, config: config)
         if route.kind == .app {
             fallbackRouteItem.title = "Elsewhere: \(RouteResolver.describe(fallback))"
@@ -316,6 +352,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         flashStatus = text
         refreshIcon()
         updateTingleiskItems()
+        refreshDeviceModel()
     }
 
     private func setFirmwareStatus(_ text: String?) {
@@ -330,6 +367,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             title += " — weak signal, raise ting volume knob"
         }
         statusLineItem.title = title
+        refreshDeviceModel()
     }
 
     private func refreshIcon() {
@@ -379,6 +417,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             self.refreshIcon()
             if state != .connectedSerial {
                 self.batteryItem.isHidden = true
+                self.deviceModel.batteryText = nil
             }
         }
         coordinator.onBattery = { [weak self] volts in
@@ -389,8 +428,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
                     volts, BatteryEstimate.percent(packVolts: volts)
                 )
                 self.batteryItem.isHidden = false
+                self.deviceModel.batteryText = String(format: "%.2f V (~%d%%)", volts, BatteryEstimate.percent(packVolts: volts))
             } else {
                 self.batteryItem.isHidden = true
+                self.deviceModel.batteryText = nil
             }
         }
     }
@@ -433,6 +474,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             }
         }
         inputDeviceItem.submenu = submenu
+        deviceModel.inputDevices = candidates.map { ($0.name, $0.uid) }
+        deviceModel.pinnedUID = configuredUID
     }
 
     @objc private func selectAutomaticInput() {
@@ -471,6 +514,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         // app: the dev binary's accessibility grant belongs to the terminal.
         axRepairItem.isHidden = permissions.axTrusted
             || Bundle.main.bundleIdentifier != AppIdentity.bundleID
+        refreshDeviceModel()
     }
 
     @objc private func fixMicrophonePermission() {
@@ -533,6 +577,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         } else {
             firmwareItem.isEnabled = false
         }
+        refreshDeviceModel()
     }
 
     /// tinker: a ting set up on another Mac carries a marker on its disk.

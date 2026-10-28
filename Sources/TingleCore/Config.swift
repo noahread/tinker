@@ -20,7 +20,7 @@ public enum TingAction: Equatable {
     /// tinker: submit what was dictated using the frontmost app's send
     /// shortcut (`[apps."…"] send`, else `[routing] send`, default ↩).
     /// Waits briefly for a late-arriving transcript from a fallback
-    /// transcription app. Default on the orange button (fxChange).
+    /// transcription app. Default on the white button (mode1–mode4).
     case send
 
     /// Short human-readable description (menu display).
@@ -612,7 +612,7 @@ public final class ConfigStore {
     enabled = true
     switchDefaultInput = false   # make the ting's adapter the system input while held
     showWaveform = true
-    # What the orange button presses to submit, unless the frontmost app's
+    # What the white button presses to submit, unless the frontmost app's
     # profile has its own `send`. Return submits a chat prompt or a web
     # form field; apps that treat Return as a newline want cmd+Return.
     send = { key = "return" }

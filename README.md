@@ -13,9 +13,8 @@
 <p align="center"><img src="docs/images/hero.svg" alt="Squeeze the ting and talk; your words land in your agent, no keyboard" width="760"></p>
 
 Squeeze the ting's trigger and talk — your words appear live in whatever app
-is focused (Claude Code, Codex, anything). Release to finish, tap orange to
-send, tap green to scrap the take, tap white to summon your agent to the
-front. It's a physical push-to-talk button for coding with agents: pick up
+is focused (Claude Code, Codex, anything). Release to finish, tap white to
+send, and tap green to scrap the take. It's a physical push-to-talk button for coding with agents: pick up
 the mic, say what you want, put it down.
 
 Under the hood, a tiny MicroPython event engine installs onto the ting's own
@@ -177,7 +176,7 @@ ting's mic instead of your laptop's.
 
 ## Default controls
 
-<p align="center"><img src="docs/images/controls.svg" alt="Annotated ting: squeeze the handle to dictate, orange sends, green erases the last take, white summons your agent" width="760"></p>
+<p align="center"><img src="docs/images/controls.svg" alt="Annotated ting: squeeze the handle to dictate, white sends, green erases the last take, orange cycles the voice preset" width="760"></p>
 
 | Input | Action |
 |---|---|

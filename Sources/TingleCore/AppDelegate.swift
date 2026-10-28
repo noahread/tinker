@@ -165,7 +165,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func handle(event: TingEvent) {
         // Any real user gesture invalidates a pending dictation rewrite —
-        // especially orange (send): text that may already be submitted
+        // especially white (send): text that may already be submitted
         // must never be edited afterward.
         switch event {
         case .beacon, .beaconHeld, .beaconSensed: break
@@ -307,7 +307,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Orange: submit with the frontmost app's send chord, after any
+    /// White button: submit with the frontmost app's send chord, after any
     /// late-arriving transcript has landed (see SendGate).
     private func performSend() {
         pendingSend?.invalidate()

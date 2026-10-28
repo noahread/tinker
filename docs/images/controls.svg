@@ -87,15 +87,15 @@
   </g>
 
   <g>
-    <text x="550" y="92"  font-size="17" font-weight="700" fill="#FF4E00">send</text>
-    <text x="550" y="110" font-size="13" fill="#8A8A8A">presses enter — ship it to your agent</text>
+    <text x="550" y="92"  font-size="17" font-weight="700" fill="#FF4E00">voice preset</text>
+    <text x="550" y="110" font-size="13" fill="#8A8A8A">cycles the ting’s voice preset</text>
 
     <text x="550" y="188" font-size="17" font-weight="700" fill="#1E6B47">erase last take</text>
     <text x="550" y="206" font-size="13" fill="#8A8A8A">scrap what you just said; tap again</text>
     <text x="550" y="222" font-size="13" fill="#8A8A8A">for earlier takes</text>
 
-    <text x="550" y="298" font-size="17" font-weight="700" fill="#8A8A8A">summon your agent</text>
-    <text x="550" y="316" font-size="13" fill="#8A8A8A">brings Claude / Codex / Cursor /</text>
-    <text x="550" y="332" font-size="13" fill="#8A8A8A">your terminal to the front</text>
+    <text x="550" y="298" font-size="17" font-weight="700" fill="#8A8A8A">send</text>
+    <text x="550" y="316" font-size="13" fill="#8A8A8A">submits with the app’s send shortcut;</text>
+    <text x="550" y="332" font-size="13" fill="#8A8A8A">waits for a late transcript first</text>
   </g>
 </svg>

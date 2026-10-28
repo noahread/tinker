@@ -19,7 +19,7 @@ public enum SendGate {
 
     /// - fallbackClosedAt: when the last fallback route released (nil: never).
     /// - lastExternalKeyAt: last keyDown from another process (nil: none seen).
-    /// - sendPressedAt: when orange was pressed.
+    /// - sendPressedAt: when the white button was pressed.
     public static func decide(now: Date, fallbackClosedAt: Date?, lastExternalKeyAt: Date?,
                               sendPressedAt: Date, settleSeconds: TimeInterval) -> Decision {
         guard let closed = fallbackClosedAt, now.timeIntervalSince(closed) < windowSeconds else { return .fire }

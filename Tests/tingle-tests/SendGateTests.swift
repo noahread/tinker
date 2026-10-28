@@ -25,7 +25,7 @@ func runSendGateTests() {
     // Typing seen BEFORE the close (the user's own keys) does not count.
     expectEqual(SendGate.decide(now: at(1), fallbackClosedAt: at(0.5), lastExternalKeyAt: at(0.2),
                                 sendPressedAt: at(1), settleSeconds: settle), .wait, "gate: pre-close typing ignored")
-    // Transcript landed and went quiet before orange was even pressed: immediate.
+    // Transcript landed and went quiet before the white button was even pressed: immediate.
     expectEqual(SendGate.decide(now: at(5), fallbackClosedAt: at(0), lastExternalKeyAt: at(2),
                                 sendPressedAt: at(5), settleSeconds: settle), .fire, "gate: already landed fires")
 }

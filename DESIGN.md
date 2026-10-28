@@ -174,8 +174,8 @@ Mappings: `mode1`–`mode4`, `modeChange`, `fxChange`, `triggerDown`,
 `triggerUp` → actions `dictate`, `eraseDictation`, `keystroke`, `keyHold`
 and `shell` (multiline scripts via TOML `\'\'\'` strings). Vocabulary
 biases dictation via `AnalysisContext.contextualStrings`. Defaults:
-trigger = dictate, orange = enter, green = erase last take, white =
-summon-agent script.
+trigger = dictate, white = send, green = erase last take. Orange is
+unmapped and cycles the ting’s voice preset.
 
 ## Distribution
 
