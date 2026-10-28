@@ -179,14 +179,15 @@ unmapped and cycles the ting’s voice preset.
 
 ## Distribution
 
-`scripts/bundle.sh` assembles `tingle.app` (SwiftPM release build + Info.plist
-+ resource bundle) and signs it: Developer ID with hardened runtime, secure
-timestamps, and entitlements (mic, Apple Events); Sparkle's nested
-executables are signed inside-out. Release flow
-(`.github/workflows/auto-release.yml`, on every push to main): version from
-the merge subject → build → sign → notarize + staple → Sparkle-signed
-appcast → GitHub Release → bump the cask in `tutorintelligence/homebrew-tap`.
-The stable signing identity is what lets TCC grants survive updates.
+`scripts/bundle.sh` assembles `tinker.app` (SwiftPM release build +
+Info.plist + resource bundle) and signs it with the best identity in the
+keychain (Developer ID, else Apple Development, else ad-hoc; hardened
+runtime, secure timestamps and the mic/Apple Events entitlements when a
+real identity is used). `scripts/install.sh` builds and installs it to
+/Applications. Pushing a `vX.Y.Z` tag runs `.github/workflows/release.yml`:
+tests → build → (sign + notarize + staple when the Developer ID secrets
+exist) → zip → GitHub Release. A stable signing identity is what lets TCC
+grants survive updates.
 
 ## Roadmap
 

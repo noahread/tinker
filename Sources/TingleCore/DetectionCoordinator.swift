@@ -344,7 +344,7 @@ final class DetectionCoordinator {
             if PinnedInput.uid != nil {
                 // Manual override pins DEVICE SELECTION only — presence
                 // must still be truthful (a pinned green dot on a sleeping
-                // ting misled Josh, 2026-07-11). Beacon liveness drives
+                // ting misled the user, 2026-07-11). Beacon liveness drives
                 // the state exactly like auto mode; only scanning/
                 // switching is disabled.
                 if let lastHeard = scanner.lastHeard, !scanner.isStale(now: now) {
