@@ -23,4 +23,10 @@ func runKeyCodesTests() {
     expectEqual(KeyCodes.symbol(key: "f18", modifiers: []), "F18", "symbol: f18")
     expectEqual(KeyCodes.symbol(key: "space", modifiers: ["opt"]), "⌥Space", "symbol: opt space")
     expectEqual(KeyCodes.symbol(key: "return", modifiers: ["shift", "cmd"]), "⇧⌘↩", "symbol: modifier order")
+    expect(KeyCodes.isFunctionBlockKey("f18"), "keys: f18 is a function-block key")
+    expect(KeyCodes.isFunctionBlockKey("F1"), "keys: f1 is a function-block key")
+    expect(KeyCodes.isFunctionBlockKey("pageup"), "keys: pageup is a function-block key")
+    expect(!KeyCodes.isFunctionBlockKey("d"), "keys: letters are not")
+    expect(!KeyCodes.isFunctionBlockKey("return"), "keys: return is not")
+    expect(!KeyCodes.isFunctionBlockKey("f21"), "keys: f21 is not mapped")
 }

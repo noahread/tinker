@@ -36,11 +36,21 @@ public enum KeyCodes {
         byName[key.lowercased()]
     }
 
+    /// Keys in the keyboard's function block. macOS stamps real presses of
+    /// these with the secondary-fn flag, and some apps (Codex's global
+    /// dictation hold key) only match when that flag is present.
+    public static func isFunctionBlockKey(_ key: String) -> Bool {
+        let k = key.lowercased()
+        if k.hasPrefix("f"), let n = Int(k.dropFirst()), (1...20).contains(n) { return true }
+        return ["left", "right", "up", "down", "home", "end", "pageup", "pagedown", "forwarddelete"].contains(k)
+    }
+
     /// Menu-friendly rendering in macOS order: ⌃⌥⇧⌘ then the key
     /// ("⌘D", "⌃Z", "F18", "⌥Space").
     public static func symbol(key: String, modifiers: [String]) -> String {
         var out = ""
         let mods = Set(modifiers.map { $0.lowercased() })
+        if mods.contains("fn") || mods.contains("function") { out += "fn" }
         if mods.contains("ctrl") || mods.contains("control") { out += "⌃" }
         if mods.contains("opt") || mods.contains("option") || mods.contains("alt") { out += "⌥" }
         if mods.contains("shift") { out += "⇧" }

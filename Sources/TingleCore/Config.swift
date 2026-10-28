@@ -454,7 +454,7 @@ public final class ConfigStore {
     # forwarddelete, home, end, pageup, pagedown, arrows, and punctuation
     # by name (minus, equal, leftbracket, rightbracket, backslash,
     # semicolon, quote, comma, period, slash, grave).
-    # Modifiers: "cmd", "shift", "opt", "ctrl".
+    # Modifiers: "cmd", "shift", "opt", "ctrl", "fn".
 
     # Words and phrases that bias dictation recognition - names, jargon,
     # anything it keeps mishearing. Applied per-session, no training step.

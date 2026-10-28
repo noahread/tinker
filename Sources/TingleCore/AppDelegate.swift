@@ -288,12 +288,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if configStore.config.routing.switchDefaultInput, let uid = InputDeviceSelector.resolvedCaptureUID() {
             inputSwitcher.engage(uid: uid)
-            // Give CoreAudio a beat to publish the new default before the
-            // app opens its recorder, and let the device change settle
-            // before the meter engine starts — a default-input switch
-            // posts a configuration change that would discard it.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: fire)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: startMeter)
+            // Let CoreAudio finish publishing the new default before the
+            // app opens its recorder: Codex's dictation silently aborts
+            // when the input device changes under a recorder it opened
+            // 50 ms after the switch, while 300 ms is reliable. The meter
+            // engine waits longer still, since the switch posts a
+            // configuration change that would discard it.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: fire)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: startMeter)
         } else {
             fire()
             startMeter()

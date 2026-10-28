@@ -84,12 +84,14 @@ final class ActionRunner {
             return nil
         }
         var flags: CGEventFlags = []
+        if KeyCodes.isFunctionBlockKey(key) { flags.insert(.maskSecondaryFn) }
         for modifier in modifiers {
             switch modifier.lowercased() {
             case "cmd", "command": flags.insert(.maskCommand)
             case "shift": flags.insert(.maskShift)
             case "opt", "option", "alt": flags.insert(.maskAlternate)
             case "ctrl", "control": flags.insert(.maskControl)
+            case "fn", "function": flags.insert(.maskSecondaryFn)
             default:
                 log.warning("unknown modifier \"\(modifier, privacy: .public)\" ignored")
             }
@@ -103,8 +105,13 @@ final class ActionRunner {
             log.error("failed to create CGEvent for key code \(code)")
             return
         }
-        event.flags = flags
-        event.post(tap: .cghidEventTap)
+        // Keep the flags CoreGraphics stamps on the event (function-key
+        // and device bits) and add ours on top. Replacing them wholesale
+        // left Codex's global dictation hold key unrecognised; an event
+        // with the system's own flags, posted at session level like
+        // System Events does, is what every app here accepts.
+        event.flags = event.flags.union(flags)
+        event.post(tap: .cgSessionEventTap)
     }
 
     /// Returns true if the process is trusted for Accessibility. On first
