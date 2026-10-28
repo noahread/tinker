@@ -103,9 +103,14 @@ every bug fix.
   matched-filter decoded by SymbolDetector.swift. SymbolSet is the
   air-gap contract: change it and the device must be re-flashed. The
   decoder requires exactly 48kHz input. Pilot lock: NO events until 3
-  periodic level-consistent beacons; sleep unlocks; single-beacon fast
-  re-lock. The payload must stay pure ASCII (serial-write deploys drop
-  non-ASCII; also the em-dash rule).
+  periodic level-consistent beacons; sleep unlocks; fast re-lock on a
+  single beacon OR (tinker) a single full codeword at the remembered
+  level, because the squeeze that wakes a sleeping ting chirps before
+  its first beacon. The level memory is persisted in Prefs
+  (`lastBeaconLevelDB`) in pinned mode too — without it every relaunch
+  pays the slow 3-beacon lock (~4-6s) on the first squeeze. The payload
+  must stay pure ASCII (serial-write deploys drop non-ASCII; also the
+  em-dash rule).
 - Chirp levels depend on BOTH the WAV amplitude and the firmware's
   output mixer: fw 1.0.5-1.0.8 rebalanced levels (0.30-amplitude tones
   that nearly clipped 1.0.4 landed at -35dBFS on 1.0.8 — phantom
@@ -133,6 +138,17 @@ every bug fix.
 
 ## Mac-side invariants
 
+- AVAudioEngine does NOT honor the pinned AUHAL device across a system
+  default-input change: it silently moves its input onto a per-process
+  default-tracking aggregate ("CADefaultDeviceAggregate-<pid>-N"), and
+  the configuration-change notification that should reveal it is
+  sometimes never posted (reproducible with `switchDefaultInput`: the
+  restore on release left the engine capturing silence for the rest of
+  the session, 2026-10-27). `AudioBackend.recheckDeviceBinding()` reads
+  the real capture device (aggregate sub-devices included) on every
+  default-input change and coordinator poll and rebuilds when the pinned
+  device is no longer among them. An aggregate that still wraps the pinned
+  device is left alone (rebuilding blinds the decoder ~0.4s).
 - SpeechTranscriber needs `[.volatileResults, .fastResults]` or output
   arrives in multi-second clumps. Never type inline in the results loop —
   the typing worker converges on the latest hypothesis.

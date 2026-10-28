@@ -66,6 +66,38 @@ func runSymbolDetectorTests() {
     _ = seeded.process(samples: gap(0.5) + word(.beaconReleased) + gap(1))
     expect(seeded.locked, "decoder: seeded level fast re-locks on one beacon")
 
+    // tinker: with a remembered level, a full codeword (not only a beacon)
+    // fast re-locks — the squeeze that wakes a sleeping ting chirps
+    // before its first beacon and must fire at once.
+    do {
+        var byEvent = SymbolDetector()
+        byEvent.seedRememberedLevel(harvestedLevel ?? -7)
+        let events = byEvent.process(samples: gap(0.5) + word(.triggerDown) + gap(1))
+        expectEqual(events, [.triggerDown], "decoder: seeded level fast re-locks on a trigger codeword and fires it")
+        expect(byEvent.locked, "decoder: codeword fast re-lock leaves the decoder locked")
+        let follow = byEvent.process(samples: word(.triggerUp) + gap(1))
+        expectEqual(follow, [.triggerUp], "decoder: the release decodes normally after a codeword re-lock")
+
+        var offLevel = SymbolDetector()
+        offLevel.seedRememberedLevel(harvestedLevel ?? -7)
+        let quiet = offLevel.process(samples: gap(0.5) + word(.triggerDown, amplitude: 0.2) + gap(1))
+        expectEqual(quiet, [], "decoder: a codeword 13dB under the remembered level does not re-lock")
+        expect(!offLevel.locked, "decoder: off-level codeword leaves the decoder unlocked")
+
+        var unseeded = SymbolDetector()
+        let cold = unseeded.process(samples: gap(0.5) + word(.triggerDown) + gap(1))
+        expectEqual(cold, [], "decoder: without level memory a lone codeword is still suppressed")
+
+        // Once the pilot has been lost (sleep), its level stays remembered
+        // and the first codeword after wake fires without a beacon.
+        var slept = SymbolDetector()
+        _ = slept.process(samples: prime())
+        _ = slept.process(samples: gap(8))
+        expect(!slept.locked, "decoder: 8s of silence loses the pilot")
+        let wake = slept.process(samples: word(.triggerDown) + gap(1))
+        expectEqual(wake, [.triggerDown], "decoder: first codeword after sleep fires on the remembered level")
+    }
+
     // The acquiring flag drives the scanner's dwell hold: true after a
     // provisional beacon, false once locked.
     var partial = SymbolDetector()

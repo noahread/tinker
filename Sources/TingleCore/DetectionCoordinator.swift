@@ -118,6 +118,10 @@ final class DetectionCoordinator {
         evaluate()
         pollTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             self?.evaluate()
+            // Belt and braces for the default-input listener: an engine that
+            // drifted onto another device is silent, not dead, so nothing
+            // else would ever notice (tinker, 2026-10-27).
+            self?.audio?.recheckDeviceBinding()
         }
         // Unplug/replug of audio hardware: re-evaluate promptly.
         AudioDeviceCatalog.onDevicesChanged(queue: .main) { [weak self] in
@@ -161,6 +165,7 @@ final class DetectionCoordinator {
             if audio == nil {
                 startAudioBackend(uid: pinnedUID)
             }
+            harvestLevelMemory()
             return
         }
 
@@ -180,12 +185,7 @@ final class DetectionCoordinator {
         // Detector pilot state: harvest the level memory (persisted for
         // future fast re-locks) and hold the scan while an acquisition is
         // actively progressing on the current device.
-        let snapshot = audio?.detectorSnapshot()
-        if let level = snapshot?.levelMemoryDB,
-           lastKnownBeaconLevelDB.map({ abs($0 - level) > 0.5 }) ?? true {
-            lastKnownBeaconLevelDB = level
-            Prefs.lastBeaconLevelDB = level
-        }
+        let snapshot = harvestLevelMemory()
 
         switch scanner.tick(now: Self.now(), candidateCount: candidates.count,
                             acquiring: snapshot?.acquiring ?? false) {
@@ -256,6 +256,22 @@ final class DetectionCoordinator {
         serial.stop()
         self.serial = nil
         onBattery?(nil)
+    }
+
+    /// Persist the detector's pilot level so the NEXT backend (and the next
+    /// launch) fast re-locks on a single beacon or codeword. Runs in both
+    /// pinned and automatic mode: the pinned path used to skip it, so every
+    /// relaunch paid the slow 3-beacon acquisition on the first squeeze
+    /// (tinker, 2026-10-27).
+    @discardableResult
+    private func harvestLevelMemory() -> (acquiring: Bool, levelMemoryDB: Double?)? {
+        let snapshot = audio?.detectorSnapshot()
+        if let level = snapshot?.levelMemoryDB,
+           lastKnownBeaconLevelDB.map({ abs($0 - level) > 0.5 }) ?? true {
+            lastKnownBeaconLevelDB = level
+            Prefs.lastBeaconLevelDB = level
+        }
+        return snapshot
     }
 
     private func startAudioBackend(uid: String) {
@@ -334,6 +350,7 @@ final class DetectionCoordinator {
             }
         }
         evaluate()
+        audio?.recheckDeviceBinding()
     }
 
     private func refreshState() {

@@ -184,6 +184,7 @@ runGuardrailTests()
 runRewriteTests()
 runFlasherTests()
 runAudioEngineOpsTests()
+runAudioBindingTests()
 runAudioHardwareTests()
 
 print(failures == 0 ? "OK — \(passes) assertions passed"
