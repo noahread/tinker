@@ -18,9 +18,10 @@ APP="$OUT/tinker.app"
 # that have it, but still gives THIS Mac a stable signature so the
 # Microphone/Accessibility grants survive rebuilds. Ad-hoc as a last resort.
 if [ -z "${CODESIGN_IDENTITY:-}" ]; then
-  FOUND=$(security find-identity -v -p codesigning 2>/dev/null | grep -o '"Developer ID Application: [^"]*"' | head -1 | tr -d '"')
+  # (|| true: under pipefail a grep with no match would abort the script.)
+  FOUND=$(security find-identity -v -p codesigning 2>/dev/null | grep -o '"Developer ID Application: [^"]*"' | head -1 | tr -d '"' || true)
   if [ -z "$FOUND" ]; then
-    FOUND=$(security find-identity -v -p codesigning 2>/dev/null | grep -o '"Apple Development: [^"]*"' | head -1 | tr -d '"')
+    FOUND=$(security find-identity -v -p codesigning 2>/dev/null | grep -o '"Apple Development: [^"]*"' | head -1 | tr -d '"' || true)
   fi
   IDENTITY="${FOUND:--}"
 else

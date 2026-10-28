@@ -42,6 +42,12 @@ every bug fix.
 - Config: `[apps."<bundle id>"]` tables merge per app with the defaults;
   a user `[[fallback]]` array replaces the default list wholesale; "builtin"
   is simply `[mappings] triggerDown/triggerUp`.
+- Settings window (`Settings.swift`, `SettingsWindow.swift`): saves
+  `settings.json` and layers `AppSettings.tomlOverlay()` as a THIRD config
+  layer that owns `apps` and `fallback` outright (`TingConfig.parse(defaults:
+  user:settings:)` drops the lower layers' copies). First open seeds from
+  the live config so nothing changes until the user edits. Nothing is
+  written until an edit.
 - Log stream for live debugging:
   `log stream --predicate 'subsystem == "com.tutorintelligence.tingle"' --info --debug`
   Note: info/debug lines do NOT persist for `log show` — stream to a file.

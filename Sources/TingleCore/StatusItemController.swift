@@ -45,12 +45,14 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let launchAtLoginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
 
     private let log = Logger(subsystem: Log.subsystem, category: "menu")
+    private let settingsWindow: SettingsWindowController
 
     init(configStore: ConfigStore, coordinator: DetectionCoordinator, permissions: PermissionsMonitor) {
         self.configStore = configStore
         self.coordinator = coordinator
         self.permissions = permissions
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        self.settingsWindow = SettingsWindowController(configStore: configStore)
         super.init()
 
         permissions.onChange = { [weak self] in
@@ -133,9 +135,12 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
 
-        // All configuration is the JSON file (live-reloaded on save);
-        // this opens it in the default editor.
-        let editConfigItem = NSMenuItem(title: "Edit config…", action: #selector(openConfigFile), keyEquivalent: ",")
+        // tinker: routing is configured in the Settings window; the TOML
+        // file stays for vocabulary, replacements and button mappings.
+        let settingsItem = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+        let editConfigItem = NSMenuItem(title: "Edit config.toml…", action: #selector(openConfigFile), keyEquivalent: "")
         let viewDefaultsItem = NSMenuItem(title: "View default config…", action: #selector(openDefaultConfigFile), keyEquivalent: "")
         editConfigItem.target = self
         menu.addItem(editConfigItem)
@@ -694,6 +699,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     }
 
     // MARK: - Config file
+
+    @objc private func openSettings() {
+        settingsWindow.show()
+    }
 
     @objc private func openConfigFile() {
         NSWorkspace.shared.open(ConfigStore.configURL)

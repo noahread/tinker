@@ -143,7 +143,16 @@ Every squeeze is routed, in this order:
 The route is pinned when you squeeze: if you ⌘-Tab away mid-sentence,
 the closing ⌘D still goes back to Claude.
 
-Add an app in `config.toml` (menu › Edit config…):
+Open **Settings…** from the tinker menu to manage all of this: the Apps
+tab lists the apps with their own dictation (Claude and Codex on, ChatGPT
+and Cursor as disabled starting points until you set their shortcuts),
+each with its mode, shortcut and send key; the Fallback tab orders the
+transcription apps (MacWhisper, Handy, Superwhisper) and shows which is
+running; General holds the input switch, waveform and default send key.
+"Add app…" picks any installed app. Changes apply immediately and are
+saved to `settings.json`, which the window owns; `config.toml` keeps
+vocabulary, replacements and the ting's button mappings, and can still
+add apps by hand:
 
 ```toml
 [apps."com.apple.Notes"]                         # osascript -e 'id of app "Notes"'
@@ -159,7 +168,8 @@ dictation = { mode = "hold", key = "f18", modifiers = ["cmd"] }
 holds it down for the whole squeeze (push-to-talk hotkeys). For anything
 else give explicit `triggerDown` / `triggerUp` actions (`keystroke`,
 `keyHold`, `shell`). `[apps]` tables merge with the defaults per app; a
-`[[fallback]]` list in `config.toml` replaces the shipped list. See
+`[[fallback]]` list in `config.toml` replaces the shipped list. Once you
+have used the Settings window, its lists win over both. See
 `default-config.toml` for every option, including
 `[routing] switchDefaultInput = true`, which makes the ting's adapter the
 system input while you hold the handle so the external app records the
