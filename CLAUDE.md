@@ -9,7 +9,9 @@ dictation. Fork of [tutorintelligence/tingle](https://github.com/tutorintelligen
 device itself. See DESIGN.md for architecture and the chirp protocol;
 README.md for user-facing docs.
 
-Upstream remote: `upstream` → tutorintelligence/tingle. Module/target names
+Upstream remote: `upstream` → tutorintelligence/tingle. Fetch it with
+`git fetch --no-tags upstream`: tingle's tags (v0.1.0 … v0.14.4) collide
+with tinker's own release tags. Module/target names
 (`TingleCore`, `tingle`, `tingle-tests`), `Log.subsystem`, and the config
 folder `~/Library/Application Support/tingle` are deliberately kept as
 upstream's so `git merge upstream/main` stays cheap. Only user-facing
