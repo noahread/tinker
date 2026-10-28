@@ -78,8 +78,7 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           if [ -n "$CERT" ]; then SIGNED="Signed and notarized: opens on any Mac."; else
             SIGNED="Ad-hoc signed: after unzipping run \`xattr -dr com.apple.quarantine tinker.app\` (or right-click → Open) before the first launch, and grant Microphone + Accessibility when asked."; fi
+          NOTES="$SIGNED"$'\n\n'"Install: unzip, move tinker.app to /Applications, launch. A ting set up on another Mac is recognised as soon as it is docked - no re-flash."
           gh release create "$GITHUB_REF_NAME" "dist/tinker-$VERSION.zip" "dist/tinker-$VERSION.zip.sha256" \
             --title "tinker $VERSION" \
-            --notes "$SIGNED
-
-Install: unzip, move tinker.app to /Applications, launch. A ting set up on another Mac is recognised as soon as it is docked — no re-flash."
+            --notes "$NOTES"
