@@ -124,7 +124,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Surface any missing permission NOW, with the system dialogs that
         // deep-link to the right pane — never let the user discover it as a
         // squeeze that types nothing.
-        permissions.promptForMissing()
+        if !Prefs.suite.bool(forKey: "hasSeenSetup") {
+            statusItemController.openSetup()
+            Prefs.suite.set(true, forKey: "hasSeenSetup")
+        } else {
+            permissions.promptForMissing()
+        }
 
         log.info("tingle started (config at \(ConfigStore.configURL.path, privacy: .public))")
     }
