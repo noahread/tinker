@@ -145,10 +145,10 @@ ting's mic instead of your laptop's.
 
 | Input | Action |
 |---|---|
-| squeeze handle | dictate live into the focused app; release to finish |
-| orange button | enter (send it) |
-| green button | erase the last dictated take (repeat for earlier takes) |
-| white button | summon your agent — brings the first running AI coding app (Claude, Codex, Cursor, iTerm2, Terminal) to the front |
+| squeeze handle | voice into the focused app, via its own dictation, a fallback transcriber, or built-in dictation; release to finish |
+| white button | send it: the app's submit shortcut (Return, or ⌘Return where configured), waiting for a late transcript first |
+| green button | erase the last dictated take (repeat for earlier takes); also cycles the ting's mode LED, which changes nothing here |
+| orange button | unmapped (cycles the ting's own voice preset); the default config shows how to make it summon your agent |
 
 Every one of these is just a default. tingle is configurable by design —
 the summon list, what each button does, the dictation vocabulary, the

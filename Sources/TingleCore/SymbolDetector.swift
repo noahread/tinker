@@ -313,6 +313,38 @@ public struct SymbolDetector {
         return []
     }
 
+    /// The pilot lock, portable across detector instances (tinker): an
+    /// engine rebuild on the SAME device — e.g. the default-input switch
+    /// around a squeeze posts a configuration change — must not cost the
+    /// user a 3-beacon (~6s) re-acquisition during which every button
+    /// press is suppressed.
+    public struct LockState: Equatable {
+        public var levelDB: Double
+        public var interval: Double?
+        public init(levelDB: Double, interval: Double?) {
+            self.levelDB = levelDB
+            self.interval = interval
+        }
+    }
+
+    public var lockState: LockState? {
+        guard locked, let level = beaconLevelEMA else { return nil }
+        return LockState(levelDB: level, interval: beaconInterval)
+    }
+
+    /// Start locked, as if the previous instance's pilot were still
+    /// present. Staleness still applies from this instance's clock, so a
+    /// ting that really went away unlocks after ~3 beacon periods.
+    public mutating func adoptLock(_ state: LockState) {
+        locked = true
+        beaconLevelEMA = state.levelDB
+        beaconInterval = state.interval
+        lastBeaconAt = 0
+        provisionalBeacons.removeAll()
+        acquiring = false
+        diagnosticsBuffer.append("beacon pilot lock carried over at \(String(format: "%.1f", state.levelDB))dB")
+    }
+
     /// The level a lock (or a lost lock) settled at — survives the detector
     /// by being re-seeded into the next instance, so wake-from-sleep can
     /// fast re-lock on a SINGLE beacon instead of the full 3-beacon

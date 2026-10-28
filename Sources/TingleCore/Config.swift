@@ -560,39 +560,26 @@ public final class ConfigStore {
     # Squeeze to dictate into whatever app is focused.
     triggerDown = { type = "dictate" }
 
-    # Orange: send it - the frontmost app's submit shortcut ([apps."…"] send,
-    # else [routing] send). After MacWhisper/Handy finish, it waits for the
-    # transcript to land before pressing.
-    fxChange = { type = "send" }
+    # White (any green mode): send it - the frontmost app's submit shortcut
+    # ([apps."…"] send, else [routing] send). After MacWhisper/Handy finish,
+    # it waits for the transcript to land before pressing. "white" is a
+    # catch-all; map mode1..mode4 for per-mode actions instead.
+    white = { type = "send" }
 
-    # Green: scrap that take (press again for the take before it).
+    # Green: scrap that take (press again for the take before it). Green
+    # also cycles the ting's own mode LED - harmless, white sends in every
+    # mode.
     modeChange = { type = "eraseDictation" }
 
-    # White (any green mode): summon your agent - bring the first running
-    # AI coding app to the front, ready to dictate into. Adjust the app
-    # list to taste; "white" is a catch-all, or map mode1..mode4 for
-    # per-mode actions.
-    white = { type = "shell", command = '''
-    for app in "Claude" "Codex" "Cursor" "iTerm2" "Terminal"; do
-      if osascript -e 'application "'"$app"'" is running' 2>/dev/null | grep -q true; then
-        osascript - "$app" <<'APPLESCRIPT'
-    on run argv
-      set appName to item 1 of argv
-      tell application appName to activate
-      delay 0.3
-      tell application "System Events" to tell process appName
-        try
-          set {wx, wy} to position of window 1
-          set {ww, wh} to size of window 1
-          click at {wx + (ww / 2), wy + (wh * 0.9)}
-        end try
-      end tell
-    end run
-    APPLESCRIPT
-        exit 0
-      fi
-    done
-    ''' }
+    # Orange: unmapped. It cycles the ting's voice preset on the device
+    # (all four are dry after Flash EP). Example - summon your agent:
+    # fxChange = { type = "shell", command = '''
+    # for app in "Claude" "Codex" "Cursor" "iTerm2" "Terminal"; do
+    #   if osascript -e 'application "'"$app"'" is running' 2>/dev/null | grep -q true; then
+    #     osascript -e 'tell application "'"$app"'" to activate'; exit 0
+    #   fi
+    # done
+    # ''' }
 
     # -- Per-app voice routing (tinker) ----------------------------------------
     # On squeeze, tinker looks at the frontmost app:

@@ -131,4 +131,24 @@ func runSymbolDetectorTests() {
     }
     expectEqual(user(prime() + glide + gap(1)), [], "decoder: slow glide fires nothing")
     expectEqual(decode(noise(Int(60 * sr), 0.02)), [], "decoder: 60s noise soak never locks")
+
+    // tinker: a detector that adopts the previous instance's pilot lock
+    // decodes a button press immediately, with no 3-beacon priming.
+    do {
+        var fresh = SymbolDetector()
+        let unprimed = fresh.process(samples: gap(0.5) + word(.fxChanged) + gap(1.0)).filter { !isBeaconish($0) }
+        expect(unprimed.isEmpty, "carry: unprimed detector suppresses the press")
+        expect(fresh.lockState == nil, "carry: unlocked detector has no lock state")
+
+        var primed = SymbolDetector()
+        _ = primed.process(samples: prime())
+        guard let lock = primed.lockState else { expect(false, "carry: primed detector exposes its lock"); return }
+        expect(abs(lock.levelDB) < 60, "carry: lock level plausible")
+
+        var successor = SymbolDetector()
+        successor.adoptLock(lock)
+        expect(successor.locked, "carry: successor starts locked")
+        let events = successor.process(samples: gap(0.5) + word(.fxChanged) + gap(1.0)).filter { !isBeaconish($0) }
+        expectEqual(events, [.fxChanged(preset: nil)], "carry: successor decodes the press at once")
+    }
 }

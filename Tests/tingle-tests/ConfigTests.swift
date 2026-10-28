@@ -51,17 +51,12 @@ func runConfigTests() {
                     "config: effective vocabulary is builtin when extras empty")
         expectEqual(config.mappings["triggerDown"], .dictate, "config: default trigger mapping")
         expectEqual(config.mappings["modeChange"], .eraseDictation, "config: default green mapping")
-        expectEqual(config.mappings["fxChange"], .send, "config: default orange mapping is send")
+        expect(config.mappings["fxChange"] == nil, "config: orange unmapped by default")
+        expectEqual(config.mappings["white"], .send, "config: white sends by default")
         expectEqual(config.routing.send, KeyChord(key: "return"), "config: default send chord is return")
         expectEqual(config.routing.sendSettleSeconds, 2.5, "config: default send settle")
         expectEqual(config.apps["com.linear"]?.send, KeyChord(key: "return", modifiers: ["cmd"]), "config: linear sends cmd+return")
         expect(config.mappings["mode1"] == nil, "config: no per-mode white mappings by default")
-        if case .shell(let cmd)? = config.mappings["white"] {
-            expect(cmd.contains("is running") && cmd.contains("activate"),
-                   "config: white catch-all is the summon script")
-        } else {
-            expect(false, "config: white catch-all mapped by default")
-        }
         expectEqual(config.action(for: .whitePress(mode: 3)), config.mappings["white"],
                     "config: whitePress falls back to the white catch-all")
     }

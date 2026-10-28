@@ -42,6 +42,9 @@ public final class AudioBackend: TingBackend {
     /// Set before start(): last known good beacon level (dBFS) to seed the
     /// detector's fast re-lock memory.
     var seedBeaconLevelDB: Double?
+    /// Pilot lock captured just before a configuration-change rebuild and
+    /// adopted by the next detector on the same device (tinker).
+    private var carriedLock: SymbolDetector.LockState?
 
     /// Thread-safe snapshot of the detector's pilot state for the beacon
     /// scanner (acquisition-in-progress extends the scan dwell; the level
@@ -151,6 +154,11 @@ public final class AudioBackend: TingBackend {
         // acquisition into every scan dwell).
         var detector = SymbolDetector()
         if let seed = seedBeaconLevelDB { detector.seedRememberedLevel(seed) }
+        if let carried = carriedLock {
+            carriedLock = nil
+            detector.adoptLock(carried)
+            log.info("carrying the beacon pilot lock across the engine rebuild")
+        }
         detectionQueue.async { self.detector = detector }
 
         engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
@@ -254,6 +262,9 @@ public final class AudioBackend: TingBackend {
             log.info("engine survived the configuration change; keeping it")
             return
         }
+        // Same device, moments later: the ting did not go anywhere, so the
+        // next detector starts locked instead of re-acquiring for ~6s.
+        carriedLock = detectionQueue.sync { detector?.lockState }
         teardownEngine()
         DispatchQueue.main.async {
             self.isRunning = false
