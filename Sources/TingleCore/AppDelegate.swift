@@ -259,7 +259,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         // External app: no engine runs in serial mode, so hold one for the
         // meter (never on main — WarmCapture syncs onto the engine queue).
-        if coordinator.runningAudioBackend == nil, let uid = InputDeviceSelector.resolvedCaptureUID() {
+        let startMeter = { [self] in
+            guard coordinator.runningAudioBackend == nil,
+                  let uid = InputDeviceSelector.resolvedCaptureUID() else { return }
             DispatchQueue.global(qos: .userInitiated).async {
                 _ = WarmCapture.shared.holdForMetering(uid: uid)
             }
@@ -274,10 +276,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if configStore.config.routing.switchDefaultInput, let uid = InputDeviceSelector.resolvedCaptureUID() {
             inputSwitcher.engage(uid: uid)
             // Give CoreAudio a beat to publish the new default before the
-            // app opens its recorder.
+            // app opens its recorder, and let the device change settle
+            // before the meter engine starts — a default-input switch
+            // posts a configuration change that would discard it.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: fire)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: startMeter)
         } else {
             fire()
+            startMeter()
         }
     }
 
