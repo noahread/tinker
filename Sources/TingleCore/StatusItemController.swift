@@ -505,6 +505,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         let available = Flasher.isTingleiskMounted && !isFlashing
         flashItem.isEnabled = available
         restoreItem.isEnabled = available
+        adoptFlashedTingIfNeeded()
         // Firmware: only meaningful with the ting docked (the flow needs
         // USB for the TING BOOT disk), and the source of truth for the
         // version is what tingle last flashed (the device doesn't report
@@ -521,6 +522,35 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             }
         } else {
             firmwareItem.isEnabled = false
+        }
+    }
+
+    /// tinker: a ting set up on another Mac carries a marker on its disk.
+    /// Trust it — record the firmware for this serial so the menu reads
+    /// "(latest)" and Flash EP skips the firmware ritual — instead of
+    /// treating the mic as brand new on every computer it visits.
+    private func adoptFlashedTingIfNeeded() {
+        guard Flasher.isTingleiskMounted, !isFlashing else {
+            flashItem.title = "Flash EP…"
+            return
+        }
+        let serial = FirmwareUpgrader.dockedSerial()
+        let known = Prefs.lastFlashedFirmware(serial: serial)
+        switch Flasher.adoptionOnDisk(currentFirmware: FirmwareUpgrader.version) {
+        case .current(let firmware):
+            flashItem.title = "Flash EP… (already set up)"
+            if known != firmware {
+                Prefs.setLastFlashedFirmware(firmware, serial: serial)
+                log.info("adopted a ting flashed elsewhere: firmware \(firmware, privacy: .public), payload current")
+            }
+        case .payloadOutdated(let firmware):
+            flashItem.title = "Flash EP… (update event engine)"
+            if known != firmware {
+                Prefs.setLastFlashedFirmware(firmware, serial: serial)
+                log.info("adopted a ting flashed elsewhere: firmware \(firmware, privacy: .public), payload differs")
+            }
+        case .firmwareOutdated, .unknown:
+            flashItem.title = "Flash EP…"
         }
     }
 

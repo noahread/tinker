@@ -58,27 +58,53 @@ the audio cable) and installs everything in one flow.
 
 ## Getting started
 
+### Install from a release
+
+Grab the latest `tinker-<version>.zip` from the
+[Releases page](https://github.com/noahread/tinker/releases), unzip it and
+move `tinker.app` to `/Applications`. Releases are built by GitHub Actions
+from a `v*` tag. Until a Developer ID certificate is configured in the
+repository's secrets they are ad-hoc signed, so macOS will refuse the first
+launch; clear the quarantine flag once:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/tinker.app
+```
+
+(or right-click the app → Open). A locked-down work Mac may not allow that
+at all; build from source there instead.
+
 ### Install from source
 
 You need Xcode Command Line Tools (`xcode-select --install`) and macOS 26+
 for built-in dictation.
 
-```sh
-git clone https://github.com/noahread/tinker.git
-cd tinker
-./scripts/bundle.sh
-cp -r dist/tinker.app /Applications/
-open /Applications/tinker.app
+```bash
+git clone https://github.com/noahread/tinker.git && cd tinker && scripts/install.sh
 ```
 
-Set `CODESIGN_IDENTITY="Developer ID Application: …"` before `bundle.sh` if
-you have one: macOS ties the Microphone and Accessibility grants to the
-code signature, so an ad-hoc rebuild re-prompts every time.
+That builds, installs to `/Applications` and launches tinker. Signing is
+auto-detected: a Developer ID or Apple Development certificate in your
+keychain gives the app a stable identity so the Microphone and
+Accessibility grants survive rebuilds; with no certificate it is ad-hoc
+signed and macOS re-asks after each rebuild.
+
+### Using one ting on several Macs
+
+Everything the ting needs lives on the ting: the firmware, the event
+engine, the chirp tones, plus a small `tinker.json` marker that records
+them. Install tinker on each Mac, grant it Microphone and Accessibility,
+and plug the mic in. On batteries over the audio cable it is recognised by
+its heartbeat straight away; dock it over USB-C once and tinker reads the
+marker, so the menu shows "Flash EP… (already set up)" and the firmware
+item reads "(latest)" instead of walking you through setup again. Only
+tinker's own config (`config.toml`) is per Mac.
 
 ### First run
 
 1. Launch tinker — a striped-circle icon appears in the menu bar.
-2. Plug the ting in over USB-C and choose **Flash EP…** from the menu. This
+2. Plug the ting in over USB-C and choose **Flash EP…** from the menu (skip
+   this on a second Mac — a ting set up elsewhere is recognised). This
    writes four inaudible signal tones and the event engine onto the ting's
    disk (existing contents are backed up first). Power-cycle the ting when
    prompted: press the small button above its USB-C port, then push the

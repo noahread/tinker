@@ -2,16 +2,30 @@
 # Assemble tinker.app from a SwiftPM release build.
 #
 # Usage: scripts/bundle.sh [output-dir]        (default: ./dist)
-# Signing: ad-hoc by default; set CODESIGN_IDENTITY="Developer ID
-# Application: ..." for a real signature (required for distribution —
-# TCC grants only survive updates with a stable identity).
+# Signing: auto-detected from the keychain (Developer ID, else Apple
+# Development, else ad-hoc); override with CODESIGN_IDENTITY. TCC grants
+# only survive updates with a stable identity.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 VERSION="${VERSION:-0.1.0}"
 OUT="${1:-dist}"
 APP="$OUT/tinker.app"
-IDENTITY="${CODESIGN_IDENTITY:--}"
+
+# Signing identity: CODESIGN_IDENTITY wins ("-" forces ad-hoc). Otherwise
+# use the best certificate in the login keychain — a Developer ID lets the
+# app open on any Mac; an Apple Development cert is only trusted on Macs
+# that have it, but still gives THIS Mac a stable signature so the
+# Microphone/Accessibility grants survive rebuilds. Ad-hoc as a last resort.
+if [ -z "${CODESIGN_IDENTITY:-}" ]; then
+  FOUND=$(security find-identity -v -p codesigning 2>/dev/null | grep -o '"Developer ID Application: [^"]*"' | head -1 | tr -d '"')
+  if [ -z "$FOUND" ]; then
+    FOUND=$(security find-identity -v -p codesigning 2>/dev/null | grep -o '"Apple Development: [^"]*"' | head -1 | tr -d '"')
+  fi
+  IDENTITY="${FOUND:--}"
+else
+  IDENTITY="$CODESIGN_IDENTITY"
+fi
 
 swift build -c release
 

@@ -145,10 +145,18 @@ with passthrough, so "sensor data" recordings can carry his voice.
 Stage candidates in a folder, `open` it in Finder for them to inspect,
 and prefer hard FFT-masked (>15kHz-only) versions for fixtures.
 
-## Contribution flow
+## Contribution flow and releases
 
 Commit directly on `main` or on short-lived branches; Conventional Commit
 subjects (`feat:`, `fix:`, `chore:`, …) are preferred but not enforced.
-There is no automated release: `scripts/bundle.sh` builds `dist/tinker.app`,
-copy it to /Applications. Set `CODESIGN_IDENTITY` for a stable signature so
-macOS keeps the Microphone/Accessibility grants across rebuilds.
+
+- `scripts/install.sh` builds, installs to /Applications and relaunches.
+  `scripts/bundle.sh` auto-detects a signing identity (Developer ID, else
+  Apple Development, else ad-hoc; `CODESIGN_IDENTITY=-` forces ad-hoc).
+- Releases: push a tag `vX.Y.Z` → `.github/workflows/release.yml` builds,
+  zips and publishes a GitHub Release. Ad-hoc signed unless the Developer
+  ID / notarization secrets exist (see the workflow header).
+- Flash EP writes `tinker.json` (firmware version + payload SHA-256) to
+  TINGDISK; `Flasher.adoptionOnDisk` reads it on any Mac so a set-up ting
+  is adopted into Prefs without a second firmware ritual. Restore stock
+  removes it.

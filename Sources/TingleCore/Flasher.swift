@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import AVFoundation
 import os
 
@@ -98,6 +99,83 @@ public enum Flasher {
             throw FlasherError.verificationFailed(reason)
         }
     }
+
+    // MARK: - Flash marker (tinker)
+
+    /// Written to TINGDISK alongside the payload so ANY Mac running tinker
+    /// recognises an already-set-up ting: no second firmware ritual, no
+    /// re-flash, when you carry the mic between computers. Upstream tingle
+    /// keeps that bookkeeping only in the flashing Mac's preferences.
+    public struct FlashMarker: Codable, Equatable {
+        public var firmware: String
+        public var payloadSHA256: String
+        public var flashedAt: String
+        public var app: String
+
+        public init(firmware: String, payloadSHA256: String, flashedAt: String, app: String) {
+            self.firmware = firmware
+            self.payloadSHA256 = payloadSHA256
+            self.flashedAt = flashedAt
+            self.app = app
+        }
+    }
+
+    public static let markerFileName = "tinker.json"
+    static var markerURL: URL { volumeURL.appendingPathComponent(markerFileName) }
+
+    public static func sha256Hex(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    public static func markerData(firmware: String, payload: Data) throws -> Data {
+        let marker = FlashMarker(
+            firmware: firmware, payloadSHA256: sha256Hex(payload),
+            flashedAt: ISO8601DateFormatter().string(from: Date()),
+            app: "tinker \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev")")
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return try encoder.encode(marker)
+    }
+
+    public static func decodeMarker(_ data: Data) -> FlashMarker? {
+        try? JSONDecoder().decode(FlashMarker.self, from: data)
+    }
+
+    /// What the docked ting's disk says about its setup.
+    public enum Adoption: Equatable {
+        /// No tinker marker (never flashed, or flashed by upstream tingle).
+        case unknown
+        /// Marker firmware is current and main.py matches this build's payload.
+        case current(firmware: String)
+        /// Marker firmware is current but main.py differs (older tinker): a
+        /// plain payload flash suffices — no firmware ritual.
+        case payloadOutdated(firmware: String)
+        /// Marker says an older firmware: the full setup applies.
+        case firmwareOutdated(firmware: String)
+    }
+
+    /// Pure decision, testable without a disk.
+    public static func adoption(marker: FlashMarker?, payloadMatches: Bool, currentFirmware: String) -> Adoption {
+        guard let marker else { return .unknown }
+        guard marker.firmware == currentFirmware else { return .firmwareOutdated(firmware: marker.firmware) }
+        return payloadMatches ? .current(firmware: marker.firmware) : .payloadOutdated(firmware: marker.firmware)
+    }
+
+    /// Read the mounted disk (nil marker when absent or unreadable).
+    static func adoptionOnDisk(currentFirmware: String) -> Adoption {
+        guard isTingleiskMounted,
+              let markerBytes = try? Data(contentsOf: markerURL),
+              let marker = decodeMarker(markerBytes) else { return .unknown }
+        let matches: Bool
+        if let ours = try? devicePayload(),
+           let theirs = try? Data(contentsOf: volumeURL.appendingPathComponent("main.py")) {
+            matches = ours == theirs
+        } else {
+            matches = false
+        }
+        return adoption(marker: marker, payloadMatches: matches, currentFirmware: currentFirmware)
+    }
+
 
     /// The device event engine shipped as main.py. Bundled via Package.swift
     /// resources from Sources/TingleCore/Resources/tingle_main.py, which must
@@ -233,6 +311,13 @@ public enum Flasher {
         try writeVerified(payload, to: volumeURL.appendingPathComponent("main.py"), label: "main.py")
         log.info("wrote main.py event engine (\(payload.count) bytes), verified")
 
+        // Marker for other Macs (see FlashMarker). Flash EP only runs once
+        // the firmware is known-current, so the version recorded here is
+        // the one the ting is running.
+        progress("Writing \(markerFileName)…")
+        try writeVerified(try markerData(firmware: FirmwareUpgrader.version, payload: payload),
+                          to: markerURL, label: markerFileName)
+
         removeAppleDoubleFiles()
         // Flush the FAT to the device before ejecting: a read-back can be
         // served from the page cache, so sync is what actually commits the
@@ -253,7 +338,7 @@ public enum Flasher {
         try backupExisting()
 
         let fm = FileManager.default
-        for name in sampleFileNames + ["main.py"] {
+        for name in sampleFileNames + ["main.py", markerFileName] {
             try? fm.removeItem(at: volumeURL.appendingPathComponent(name))
         }
         removeAppleDoubleFiles()

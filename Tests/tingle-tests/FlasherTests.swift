@@ -73,4 +73,24 @@ func runFlasherTests() {
     expect(wav.count == 2444, "flasher: symbol WAV is 2444 bytes")
     expect(wav.prefix(4) == Data("RIFF".utf8) && wav[8..<12] == Data("WAVE".utf8),
            "flasher: symbol WAV has RIFF/WAVE header")
+
+    // --- tinker flash marker: lets another Mac recognise a set-up ting ---
+    do {
+        let payload = Data("print('hi')".utf8)
+        let bytes = try! Flasher.markerData(firmware: "1.0.8", payload: payload)
+        guard let marker = Flasher.decodeMarker(bytes) else { expect(false, "marker: round-trips"); return }
+        expectEqual(marker.firmware, "1.0.8", "marker: firmware recorded")
+        expectEqual(marker.payloadSHA256, Flasher.sha256Hex(payload), "marker: payload hash recorded")
+        expect(marker.app.hasPrefix("tinker"), "marker: names the app")
+        expect(Flasher.decodeMarker(Data("not json".utf8)) == nil, "marker: garbage decodes to nil")
+
+        expectEqual(Flasher.adoption(marker: nil, payloadMatches: true, currentFirmware: "1.0.8"),
+                    .unknown, "adopt: no marker is unknown")
+        expectEqual(Flasher.adoption(marker: marker, payloadMatches: true, currentFirmware: "1.0.8"),
+                    .current(firmware: "1.0.8"), "adopt: matching marker + payload is current")
+        expectEqual(Flasher.adoption(marker: marker, payloadMatches: false, currentFirmware: "1.0.8"),
+                    .payloadOutdated(firmware: "1.0.8"), "adopt: same firmware, older payload")
+        expectEqual(Flasher.adoption(marker: marker, payloadMatches: true, currentFirmware: "1.0.9"),
+                    .firmwareOutdated(firmware: "1.0.8"), "adopt: older firmware needs the ritual")
+    }
 }
