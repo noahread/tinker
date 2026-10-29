@@ -113,6 +113,35 @@ enum AudioDeviceCatalog {
         AudioObjectAddPropertyListenerBlock(systemObject, &address, queue) { _, _ in block() }
     }
 
+    /// Invoke `block` (on `queue`) whenever the system default INPUT device
+    /// changes (tinker's own squeeze-time switch, System Settings, another
+    /// app). Returns the listener for `removeDefaultInputListener`.
+    @discardableResult
+    static func onDefaultInputChanged(queue: DispatchQueue, _ block: @escaping () -> Void) -> AudioObjectPropertyListenerBlock {
+        var address = defaultInputAddress
+        let listener: AudioObjectPropertyListenerBlock = { _, _ in block() }
+        AudioObjectAddPropertyListenerBlock(systemObject, &address, queue, listener)
+        return listener
+    }
+
+    /// `queue` must be the queue the listener was registered on: CoreAudio
+    /// identifies block listeners by (object, address, queue, block), so a
+    /// nil queue silently removes nothing and every backend replacement
+    /// leaked a listener that kept firing (Bugbot, PR #1).
+    static func removeDefaultInputListener(_ listener: @escaping AudioObjectPropertyListenerBlock,
+                                           queue: DispatchQueue) {
+        var address = defaultInputAddress
+        AudioObjectRemovePropertyListenerBlock(systemObject, &address, queue, listener)
+    }
+
+    private static var defaultInputAddress: AudioObjectPropertyAddress {
+        AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+    }
+
     // MARK: - Per-device properties
 
     private static func describe(_ id: AudioDeviceID) -> AudioInputDevice? {

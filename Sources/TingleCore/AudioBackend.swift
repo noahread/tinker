@@ -24,6 +24,12 @@ public final class AudioBackend: TingBackend {
     var onStateChange: (() -> Void)?
 
     public private(set) var isRunning = false
+    /// The engine could not be brought up (device un-pinnable, wrong
+    /// sample rate, AVAudioEngine.start threw). A failed backend never
+    /// recovers on its own: the coordinator must replace it. Without this
+    /// a dead backend sat in the coordinator's slot and blocked every
+    /// retry after the adapter was unplugged (2026-10-28, 10 hours deaf).
+    public private(set) var startFailed = false
     private(set) var deviceName = "default input"
     /// The tap's native input format, available once the engine is running.
     public private(set) var inputFormat: AVAudioFormat?
@@ -38,6 +44,8 @@ public final class AudioBackend: TingBackend {
     private var engineFormat: AVAudioFormat?
     private var tapInstalled = false
     private var configChangeObserver: NSObjectProtocol?
+    /// tinker: system default-input listener (see recheckDeviceBinding).
+    private var defaultInputListener: AudioObjectPropertyListenerBlock?
     private var detector: SymbolDetector?
     /// Set before start(): last known good beacon level (dBFS) to seed the
     /// detector's fast re-lock memory.
@@ -96,6 +104,7 @@ public final class AudioBackend: TingBackend {
                     return
                 }
                 AudioEngineOps.queue.async { self.startEngine() }
+                self.observeDefaultInputChanges()
             }
         }
     }
@@ -108,6 +117,10 @@ public final class AudioBackend: TingBackend {
         _stopped = true
         stoppedLock.unlock()
         isRunning = false
+        if let defaultInputListener {
+            AudioDeviceCatalog.removeDefaultInputListener(defaultInputListener, queue: AudioEngineOps.queue)
+            self.defaultInputListener = nil
+        }
         AudioEngineOps.queue.async { self.teardownEngine() }
     }
 
@@ -127,14 +140,14 @@ public final class AudioBackend: TingBackend {
         // stays stopped — NEVER a silent fallback to the default/built-in mic.
         guard Self.pinInputDevice(uid: deviceUID, on: engine) else {
             log.error("cannot pin input device \(self.deviceUID, privacy: .public); audio backend stopped")
-            DispatchQueue.main.async { self.onStateChange?() }
+            markStartFailed()
             return
         }
 
         let format = engine.inputNode.inputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0 else {
             log.error("no usable audio input device; audio backend idle")
-            DispatchQueue.main.async { self.onStateChange?() }
+            markStartFailed()
             return
         }
 
@@ -145,6 +158,7 @@ public final class AudioBackend: TingBackend {
         guard format.sampleRate == SymbolSet.sampleRate else {
             log.error("input device at \(format.sampleRate)Hz — the symbol decoder requires 48000Hz; not decoding")
             detectionQueue.async { self.detector = nil }
+            markStartFailed()
             return
         }
         // Fresh detector, serialized with the tap's processing blocks so a
@@ -207,7 +221,7 @@ public final class AudioBackend: TingBackend {
             log.error("failed to start audio engine: \(String(describing: error))")
             engine.inputNode.removeTap(onBus: 0)
             tapInstalled = false
-            DispatchQueue.main.async { self.onStateChange?() }
+            markStartFailed()
             return
         }
 
@@ -224,6 +238,16 @@ public final class AudioBackend: TingBackend {
             self.inputFormat = format
             self.deviceName = name
             self.isRunning = true
+            self.onStateChange?()
+        }
+    }
+
+    /// Engine bring-up failed (AudioEngineOps.queue): publish it on main so
+    /// the coordinator's next evaluation replaces this backend.
+    private func markStartFailed() {
+        DispatchQueue.main.async {
+            guard !self.stopped else { return }
+            self.startFailed = true
             self.onStateChange?()
         }
     }
@@ -262,6 +286,13 @@ public final class AudioBackend: TingBackend {
             log.info("engine survived the configuration change; keeping it")
             return
         }
+        rebuildEngine(reason: "configuration change")
+    }
+
+    /// Abandon the live engine and start a fresh one on the pinned device
+    /// (AudioEngineOps.queue only). Shared by the configuration-change
+    /// probe and the device-binding recheck.
+    private func rebuildEngine(reason: String) {
         // Same device, moments later: the ting did not go anywhere, so the
         // next detector starts locked instead of re-acquiring for ~6s.
         carriedLock = detectionQueue.sync { detector?.lockState }
@@ -277,11 +308,91 @@ public final class AudioBackend: TingBackend {
         AudioEngineOps.queue.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             guard let self, !self.stopped, self.engine == nil else { return }
             guard Self.deviceID(forUID: self.deviceUID) != nil else {
-                self.log.warning("input device \(self.deviceUID, privacy: .public) gone after configuration change; awaiting device rescan")
+                self.log.warning("input device \(self.deviceUID, privacy: .public) gone after \(reason, privacy: .public); awaiting device rescan")
                 return
             }
-            self.log.info("rebuilding audio engine after configuration change")
+            self.log.info("rebuilding audio engine after \(reason, privacy: .public)")
             self.startEngine()
+        }
+    }
+
+    // MARK: - Device-binding recheck (tinker)
+
+    /// AVAudioEngine quietly re-points its input unit at the new system
+    /// default input whenever the default changes, even though the AUHAL
+    /// is pinned, and the configuration-change notification that normally
+    /// reveals this can go missing on a fast switch-and-restore (2026-10-27:
+    /// a 0.5s squeeze with `switchDefaultInput` left the engine capturing
+    /// silence from the old default for the rest of the session — no
+    /// beacons, no events, no ⌘D). True when the running engine no longer
+    /// captures from the pinned device and must be rebuilt.
+    ///
+    /// `captureDevices` is what the engine really records from: the bound
+    /// device itself, or, when AVFAudio has moved the engine onto its
+    /// default-tracking aggregate ("CADefaultDeviceAggregate-<pid>-N"), that
+    /// aggregate's active sub-devices. An aggregate that currently wraps
+    /// the pinned device still hears the ting, so it is left alone — a
+    /// rebuild there would blind the decoder for ~0.4s right after every
+    /// squeeze-time input switch. A vanished pinned device is NOT a binding
+    /// loss: the coordinator's device-list hook owns that case (stop +
+    /// rescan, never a default-mic fallback).
+    public static func bindingLost(engineRunning: Bool,
+                                   captureDevices: [AudioDeviceID]?,
+                                   pinnedDevice: AudioDeviceID?) -> Bool {
+        guard let pinnedDevice else { return false }
+        guard engineRunning, let captureDevices else { return true }
+        return !captureDevices.contains(pinnedDevice)
+    }
+
+    /// Verify the live engine still captures from the pinned device and
+    /// rebuild it if it drifted. Cheap (two property reads on the engine
+    /// queue, bounded); safe to call from the coordinator's poll and from
+    /// device-change hooks. No-op while stopped or mid-rebuild.
+    public func recheckDeviceBinding() {
+        AudioEngineOps.queue.async { [weak self] in
+            guard let self, !self.stopped, let engine = self.engine else { return }
+            let pinned = Self.deviceID(forUID: self.deviceUID)
+            var running = false
+            var bound: AudioDeviceID?
+            let responsive = AudioEngineOps.bounded(timeout: 0.5) {
+                running = engine.isRunning
+                bound = Self.currentInputDeviceID(of: engine)
+            }
+            let capture = (responsive ? bound : nil).map(Self.captureDevices(of:))
+            guard Self.bindingLost(engineRunning: responsive && running,
+                                   captureDevices: capture,
+                                   pinnedDevice: pinned) else { return }
+            let drifted: String
+            if let capture, !capture.isEmpty {
+                drifted = capture.map { Self.deviceName(of: $0) ?? "#\($0)" }.joined(separator: ", ")
+            } else {
+                drifted = running ? "an unknown device" : "a stopped engine"
+            }
+            self.log.error("audio engine drifted off the pinned input (now capturing \(drifted, privacy: .public)); rebinding")
+            self.rebuildEngine(reason: "input binding loss")
+        }
+    }
+
+    /// UID of the device the engine's input unit is bound to right now
+    /// (nil when not running). Hardware tests only; bounded.
+    public func boundInputDeviceUID() -> String? {
+        var uid: String?
+        AudioEngineOps.bounded(timeout: 1.0) {
+            AudioEngineOps.queue.sync {
+                guard let engine = self.engine, let id = Self.currentInputDeviceID(of: engine) else { return }
+                uid = Self.stringProperty(id, selector: kAudioDevicePropertyDeviceUID)
+            }
+        }
+        return uid
+    }
+
+    private func observeDefaultInputChanges() {
+        guard defaultInputListener == nil, !stopped else { return }
+        // Debounced: a switch-and-restore pair settles within a few hundred
+        // ms; probe once after the dust settles (and again on the next
+        // coordinator poll if the engine is still mid-rebuild).
+        defaultInputListener = AudioDeviceCatalog.onDefaultInputChanged(queue: AudioEngineOps.queue) { [weak self] in
+            AudioEngineOps.queue.asyncAfter(deadline: .now() + 0.5) { self?.recheckDeviceBinding() }
         }
     }
 
@@ -366,6 +477,13 @@ public final class AudioBackend: TingBackend {
 
     /// Name of the device the engine's input AUHAL is currently bound to.
     static func currentInputDeviceName(of engine: AVAudioEngine) -> String? {
+        currentInputDeviceID(of: engine).flatMap(deviceName(of:))
+    }
+
+    /// The device the engine's input AUHAL is currently bound to — what it
+    /// REALLY captures from, which can differ from the pinned UID after a
+    /// default-input change (see recheckDeviceBinding).
+    static func currentInputDeviceID(of engine: AVAudioEngine) -> AudioDeviceID? {
         guard let audioUnit = engine.inputNode.audioUnit else { return nil }
         var deviceID = AudioDeviceID(kAudioObjectUnknown)
         var size = UInt32(MemoryLayout<AudioDeviceID>.size)
@@ -377,18 +495,44 @@ public final class AudioBackend: TingBackend {
             &deviceID,
             &size
         ) == noErr, deviceID != kAudioObjectUnknown else { return nil }
+        return deviceID
+    }
 
+    static func deviceName(of deviceID: AudioDeviceID) -> String? {
+        stringProperty(deviceID, selector: kAudioObjectPropertyName)
+    }
+
+    /// The physical device(s) behind `deviceID`: its active sub-devices
+    /// when it is an aggregate (AVFAudio's default-tracking one included),
+    /// else the device itself.
+    static func captureDevices(of deviceID: AudioDeviceID) -> [AudioDeviceID] {
         var address = AudioObjectPropertyAddress(
-            mSelector: kAudioObjectPropertyName,
+            mSelector: kAudioAggregateDevicePropertyActiveSubDeviceList,
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain
         )
-        var name: Unmanaged<CFString>?
-        var nameSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
-        let status = withUnsafeMutablePointer(to: &name) { namePointer in
-            AudioObjectGetPropertyData(deviceID, &address, 0, nil, &nameSize, namePointer)
+        var size: UInt32 = 0
+        guard AudioObjectHasProperty(deviceID, &address),
+              AudioObjectGetPropertyDataSize(deviceID, &address, 0, nil, &size) == noErr,
+              size > 0 else { return [deviceID] }
+        var subDevices = [AudioObjectID](repeating: kAudioObjectUnknown, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &subDevices) == noErr else { return [deviceID] }
+        let live = subDevices.filter { $0 != kAudioObjectUnknown }
+        return live.isEmpty ? [deviceID] : live
+    }
+
+    private static func stringProperty(_ deviceID: AudioDeviceID, selector: AudioObjectPropertySelector) -> String? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: selector,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var value: Unmanaged<CFString>?
+        var valueSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        let status = withUnsafeMutablePointer(to: &value) { pointer in
+            AudioObjectGetPropertyData(deviceID, &address, 0, nil, &valueSize, pointer)
         }
-        guard status == noErr, let name else { return nil }
-        return name.takeRetainedValue() as String
+        guard status == noErr, let value else { return nil }
+        return value.takeRetainedValue() as String
     }
 }

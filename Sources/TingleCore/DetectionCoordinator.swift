@@ -49,6 +49,33 @@ enum BackendState: Equatable {
 /// Picks the active backend: serial when the ting's CDC device is present
 /// (richer + exact), audio otherwise. Re-evaluates on a 2s poll.
 /// TODO: replace polling with IOKit attach/detach notifications.
+/// What the pinned-input driver does with its backend slot on each
+/// evaluation. Pure, so the regression for 2026-10-28 is a unit test: the
+/// adapter was unplugged, the replacement backend failed to pin, and that
+/// dead object blocked every retry for the rest of the day — including
+/// after the adapter came back.
+public enum PinnedInputPolicy {
+    public enum Action: Equatable {
+        /// A backend exists and has not failed: leave it alone (it may
+        /// still be starting, or it is running).
+        case keep
+        /// No backend and the device is present: start one.
+        case start
+        /// The backend failed to start and the device is present: drop it
+        /// and start a fresh one.
+        case restart
+        /// The device is not plugged in: no backend until it returns.
+        /// Starting one would only manufacture a failed backend.
+        case waitForDevice
+    }
+
+    public static func action(hasBackend: Bool, backendFailed: Bool, deviceExists: Bool) -> Action {
+        guard deviceExists else { return .waitForDevice }
+        if !hasBackend { return .start }
+        return backendFailed ? .restart : .keep
+    }
+}
+
 final class DetectionCoordinator {
     var onEvent: ((TingEvent) -> Void)?
     /// Live handle state carried by beacons (true = held). Used to
@@ -84,6 +111,12 @@ final class DetectionCoordinator {
     private var audio: AudioBackend?
     private var pollTimer: Timer?
     private var noCandidateDevice = false
+    /// Pinned mode: the configured device is not present (logged once).
+    private var pinnedDeviceMissing = false
+    /// Pinned mode: a failed backend is retried on the next device-list
+    /// change immediately, and on the poll no more often than this.
+    private var failedBackendRetryAt: TimeInterval = 0
+    private static let failedBackendRetryInterval: TimeInterval = 10
     /// Last beacon level a lock settled at, carried across backend
     /// restarts (and app restarts via Prefs) to power single-beacon fast
     /// re-lock after sleep.
@@ -118,6 +151,10 @@ final class DetectionCoordinator {
         evaluate()
         pollTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             self?.evaluate()
+            // Belt and braces for the default-input listener: an engine that
+            // drifted onto another device is silent, not dead, so nothing
+            // else would ever notice (tinker, 2026-10-27).
+            self?.audio?.recheckDeviceBinding()
         }
         // Unplug/replug of audio hardware: re-evaluate promptly.
         AudioDeviceCatalog.onDevicesChanged(queue: .main) { [weak self] in
@@ -158,11 +195,33 @@ final class DetectionCoordinator {
         // Manual override: pin exactly the configured device.
         if let pinnedUID = PinnedInput.uid {
             noCandidateDevice = false
-            if audio == nil {
+            let deviceExists = AudioBackend.deviceID(forUID: pinnedUID) != nil
+            switch PinnedInputPolicy.action(hasBackend: audio != nil,
+                                            backendFailed: audio?.startFailed ?? false,
+                                            deviceExists: deviceExists) {
+            case .keep:
+                break
+            case .start:
+                pinnedDeviceMissing = false
                 startAudioBackend(uid: pinnedUID)
+            case .restart:
+                let now = Self.now()
+                guard now >= failedBackendRetryAt else { break }
+                failedBackendRetryAt = now + Self.failedBackendRetryInterval
+                log.warning("pinned input backend failed to start; retrying")
+                stopAudio()
+                startAudioBackend(uid: pinnedUID)
+            case .waitForDevice:
+                if !pinnedDeviceMissing {
+                    log.warning("pinned input device \(pinnedUID, privacy: .public) is not present; waiting for it")
+                }
+                pinnedDeviceMissing = true
+                stopAudio()
             }
+            harvestLevelMemory()
             return
         }
+        pinnedDeviceMissing = false
 
         // Automatic (beacon detection).
         let candidates = InputDeviceSelector.candidates(from: AudioDeviceCatalog.systemInputDevices())
@@ -180,12 +239,7 @@ final class DetectionCoordinator {
         // Detector pilot state: harvest the level memory (persisted for
         // future fast re-locks) and hold the scan while an acquisition is
         // actively progressing on the current device.
-        let snapshot = audio?.detectorSnapshot()
-        if let level = snapshot?.levelMemoryDB,
-           lastKnownBeaconLevelDB.map({ abs($0 - level) > 0.5 }) ?? true {
-            lastKnownBeaconLevelDB = level
-            Prefs.lastBeaconLevelDB = level
-        }
+        let snapshot = harvestLevelMemory()
 
         switch scanner.tick(now: Self.now(), candidateCount: candidates.count,
                             acquiring: snapshot?.acquiring ?? false) {
@@ -256,6 +310,22 @@ final class DetectionCoordinator {
         serial.stop()
         self.serial = nil
         onBattery?(nil)
+    }
+
+    /// Persist the detector's pilot level so the NEXT backend (and the next
+    /// launch) fast re-locks on a single beacon or codeword. Runs in both
+    /// pinned and automatic mode: the pinned path used to skip it, so every
+    /// relaunch paid the slow 3-beacon acquisition on the first squeeze
+    /// (tinker, 2026-10-27).
+    @discardableResult
+    private func harvestLevelMemory() -> (acquiring: Bool, levelMemoryDB: Double?)? {
+        let snapshot = audio?.detectorSnapshot()
+        if let level = snapshot?.levelMemoryDB,
+           lastKnownBeaconLevelDB.map({ abs($0 - level) > 0.5 }) ?? true {
+            lastKnownBeaconLevelDB = level
+            Prefs.lastBeaconLevelDB = level
+        }
+        return snapshot
     }
 
     private func startAudioBackend(uid: String) {
@@ -333,7 +403,11 @@ final class DetectionCoordinator {
                 scanner.deviceLost(now: Self.now())
             }
         }
+        // A replug is the moment a failed pinned backend should be retried,
+        // whatever the poll backoff says.
+        failedBackendRetryAt = 0
         evaluate()
+        audio?.recheckDeviceBinding()
     }
 
     private func refreshState() {
@@ -369,7 +443,7 @@ final class DetectionCoordinator {
             } else {
                 state = .searching(deviceName: audio.deviceName)
             }
-        } else if audio == nil, noCandidateDevice {
+        } else if audio == nil, noCandidateDevice || pinnedDeviceMissing {
             state = .noInputDevice
         } else {
             state = .idle

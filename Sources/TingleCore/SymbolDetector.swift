@@ -281,13 +281,13 @@ public struct SymbolDetector {
         switch SymbolSet.Message(rawValue: bestMessage) {
         case .beaconReleased: return acquireAndEmit(.beacon, level: level, at: at)
         case .beaconHeld: return acquireAndEmit(.beaconHeld, level: level, at: at)
-        case .triggerDown: return userEvent(.triggerDown, level: level)
-        case .triggerUp: return userEvent(.triggerUp, level: level)
+        case .triggerDown: return userEvent(.triggerDown, level: level, at: at)
+        case .triggerUp: return userEvent(.triggerUp, level: level, at: at)
         case .white1, .white2, .white3, .white4:
-            return userEvent(.whitePress(mode: bestMessage - 3), level: level)
+            return userEvent(.whitePress(mode: bestMessage - 3), level: level, at: at)
         case .mode1, .mode2, .mode3, .mode4:
-            return userEvent(.modeChanged(mode: bestMessage - 7), level: level)
-        case .fxChanged: return userEvent(.fxChanged(preset: nil), level: level)
+            return userEvent(.modeChanged(mode: bestMessage - 7), level: level, at: at)
+        case .fxChanged: return userEvent(.fxChanged(preset: nil), level: level, at: at)
         case .none:
             diagnosticsBuffer.append("spare codeword \(bestMessage) — ignored")
             return []
@@ -355,10 +355,25 @@ public struct SymbolDetector {
         if rememberedLevelDB == nil { rememberedLevelDB = levelDB }
     }
 
-    private mutating func userEvent(_ event: TingEvent, level: Double) -> [TingEvent] {
+    private mutating func userEvent(_ event: TingEvent, level: Double, at: Double) -> [TingEvent] {
         guard levelCredible(level) else {
             diagnosticsBuffer.append("\(event.logDescription) level \(String(format: "%.1f", level))dB not credible — dropped")
             return []
+        }
+        // tinker: a squeeze that WAKES the ting puts its trigger chirp on
+        // the wire before the first beacon, so beacon-only fast re-lock
+        // still cost that press ~2s (2026-10-27: 1.6-2.7s to the first
+        // keystroke after every sleep). A full codeword (RS distance 3)
+        // at the remembered pilot level is the same evidence a single
+        // beacon gives, so it re-locks and fires at once. Unseeded
+        // detectors and off-level words stay suppressed.
+        if !locked, let remembered = rememberedLevelDB, abs(level - remembered) <= 6 {
+            locked = true
+            beaconLevelEMA = remembered
+            lastBeaconAt = at
+            provisionalBeacons.removeAll()
+            acquiring = false
+            diagnosticsBuffer.append("fast re-lock on \(event.logDescription) at \(String(format: "%.1f", level))dB")
         }
         return [event]
     }
