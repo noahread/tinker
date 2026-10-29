@@ -41,4 +41,27 @@ func runAudioBindingTests() {
     expect(settled.wait(timeout: .now() + 2) == .success, "binding: recheck on an idle backend leaves the engine queue free")
     expect(!backend.isRunning, "binding: recheck never starts a backend that was not started")
     expect(backend.boundInputDeviceUID() == nil, "binding: no bound device without an engine")
+    // Regression for 2026-10-28: the adapter was unplugged at 11:00, the
+    // coordinator stopped the backend and at once created a replacement
+    // that could not pin the absent device. That failed object stayed in
+    // the slot, "if audio == nil" never fired again, and the adapter's
+    // return at 17:35 went unnoticed — tinker was deaf until relaunch.
+    typealias Pinned = PinnedInputPolicy
+    expectEqual(Pinned.action(hasBackend: false, backendFailed: false, deviceExists: true), .start,
+                "pinned: no backend and the device is present -> start")
+    expectEqual(Pinned.action(hasBackend: true, backendFailed: false, deviceExists: true), .keep,
+                "pinned: a healthy (or still starting) backend is left alone")
+    expectEqual(Pinned.action(hasBackend: true, backendFailed: true, deviceExists: true), .restart,
+                "pinned: a failed backend with the device present is replaced (the incident)")
+    expectEqual(Pinned.action(hasBackend: false, backendFailed: false, deviceExists: false), .waitForDevice,
+                "pinned: no device -> do not manufacture a backend that cannot pin")
+    expectEqual(Pinned.action(hasBackend: true, backendFailed: true, deviceExists: false), .waitForDevice,
+                "pinned: a failed backend is not retried until the device is back")
+    expectEqual(Pinned.action(hasBackend: true, backendFailed: false, deviceExists: false), .waitForDevice,
+                "pinned: device gone from under a live backend -> stop and wait")
+
+    let fresh = AudioBackend(deviceUID: "no-such-device", frequencies: [18000])
+    expect(!fresh.startFailed, "backend: a never-started backend has not failed")
+    expect(!fresh.isRunning, "backend: a never-started backend is not running")
+
 }

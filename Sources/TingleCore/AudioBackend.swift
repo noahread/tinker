@@ -24,6 +24,12 @@ public final class AudioBackend: TingBackend {
     var onStateChange: (() -> Void)?
 
     public private(set) var isRunning = false
+    /// The engine could not be brought up (device un-pinnable, wrong
+    /// sample rate, AVAudioEngine.start threw). A failed backend never
+    /// recovers on its own: the coordinator must replace it. Without this
+    /// a dead backend sat in the coordinator's slot and blocked every
+    /// retry after the adapter was unplugged (2026-10-28, 10 hours deaf).
+    public private(set) var startFailed = false
     private(set) var deviceName = "default input"
     /// The tap's native input format, available once the engine is running.
     public private(set) var inputFormat: AVAudioFormat?
@@ -134,14 +140,14 @@ public final class AudioBackend: TingBackend {
         // stays stopped — NEVER a silent fallback to the default/built-in mic.
         guard Self.pinInputDevice(uid: deviceUID, on: engine) else {
             log.error("cannot pin input device \(self.deviceUID, privacy: .public); audio backend stopped")
-            DispatchQueue.main.async { self.onStateChange?() }
+            markStartFailed()
             return
         }
 
         let format = engine.inputNode.inputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0 else {
             log.error("no usable audio input device; audio backend idle")
-            DispatchQueue.main.async { self.onStateChange?() }
+            markStartFailed()
             return
         }
 
@@ -152,6 +158,7 @@ public final class AudioBackend: TingBackend {
         guard format.sampleRate == SymbolSet.sampleRate else {
             log.error("input device at \(format.sampleRate)Hz — the symbol decoder requires 48000Hz; not decoding")
             detectionQueue.async { self.detector = nil }
+            markStartFailed()
             return
         }
         // Fresh detector, serialized with the tap's processing blocks so a
@@ -214,7 +221,7 @@ public final class AudioBackend: TingBackend {
             log.error("failed to start audio engine: \(String(describing: error))")
             engine.inputNode.removeTap(onBus: 0)
             tapInstalled = false
-            DispatchQueue.main.async { self.onStateChange?() }
+            markStartFailed()
             return
         }
 
@@ -231,6 +238,16 @@ public final class AudioBackend: TingBackend {
             self.inputFormat = format
             self.deviceName = name
             self.isRunning = true
+            self.onStateChange?()
+        }
+    }
+
+    /// Engine bring-up failed (AudioEngineOps.queue): publish it on main so
+    /// the coordinator's next evaluation replaces this backend.
+    private func markStartFailed() {
+        DispatchQueue.main.async {
+            guard !self.stopped else { return }
+            self.startFailed = true
             self.onStateChange?()
         }
     }

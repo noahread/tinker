@@ -149,6 +149,12 @@ every bug fix.
   default-input change and coordinator poll and rebuilds when the pinned
   device is no longer among them. An aggregate that still wraps the pinned
   device is left alone (rebuilding blinds the decoder ~0.4s).
+- A backend that fails to start (`AudioBackend.startFailed`: un-pinnable
+  device, non-48k, engine start threw) never recovers by itself. In pinned
+  mode the coordinator only starts a backend while the device is present
+  (`PinnedInputPolicy`) and replaces a failed one on the next replug or
+  10 s poll; "if audio == nil" alone left tinker deaf for 10 hours after an
+  adapter unplug (2026-10-28).
 - SpeechTranscriber needs `[.volatileResults, .fastResults]` or output
   arrives in multi-second clumps. Never type inline in the results loop —
   the typing worker converges on the latest hypothesis.
