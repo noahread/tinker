@@ -124,9 +124,14 @@ enum AudioDeviceCatalog {
         return listener
     }
 
-    static func removeDefaultInputListener(_ listener: @escaping AudioObjectPropertyListenerBlock) {
+    /// `queue` must be the queue the listener was registered on: CoreAudio
+    /// identifies block listeners by (object, address, queue, block), so a
+    /// nil queue silently removes nothing and every backend replacement
+    /// leaked a listener that kept firing (Bugbot, PR #1).
+    static func removeDefaultInputListener(_ listener: @escaping AudioObjectPropertyListenerBlock,
+                                           queue: DispatchQueue) {
         var address = defaultInputAddress
-        AudioObjectRemovePropertyListenerBlock(systemObject, &address, nil, listener)
+        AudioObjectRemovePropertyListenerBlock(systemObject, &address, queue, listener)
     }
 
     private static var defaultInputAddress: AudioObjectPropertyAddress {

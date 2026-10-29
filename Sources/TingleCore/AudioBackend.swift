@@ -118,7 +118,7 @@ public final class AudioBackend: TingBackend {
         stoppedLock.unlock()
         isRunning = false
         if let defaultInputListener {
-            AudioDeviceCatalog.removeDefaultInputListener(defaultInputListener)
+            AudioDeviceCatalog.removeDefaultInputListener(defaultInputListener, queue: AudioEngineOps.queue)
             self.defaultInputListener = nil
         }
         AudioEngineOps.queue.async { self.teardownEngine() }
